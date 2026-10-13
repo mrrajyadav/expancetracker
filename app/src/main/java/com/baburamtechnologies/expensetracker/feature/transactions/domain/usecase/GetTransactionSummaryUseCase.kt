@@ -1,0 +1,10 @@
+package com.baburamtechnologies.expensetracker.feature.transactions.domain.usecase
+
+import com.baburamtechnologies.expensetracker.feature.transactions.domain.repository.TransactionRepository
+import javax.inject.Inject
+
+class GetTransactionSummaryUseCase @Inject constructor(
+    private val repository: TransactionRepository
+) {
+    operator fun invoke(startDate: String, endDate: String) = repository.getTransactionSummary(startDate, endDate)
+}

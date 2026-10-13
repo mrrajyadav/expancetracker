@@ -1,0 +1,132 @@
+<resources>
+    <string name="app_name">Expense Tracker</string>
+    <string name="default_web_client_id">703872330321-b1sjj3j9uqko0gusf3dqkvbm3m4kh4oq.apps.googleusercontent.com</string>
+
+    <!-- General Labels -->
+    <string name="ok">OK</string>
+    <string name="cancel">Cancel</string>
+    <string name="confirm">Confirm</string>
+    <string name="save">Save</string>
+    <string name="delete">Delete</string>
+    <string name="edit">Edit</string>
+    <string name="other">Other</string>
+
+    <!-- Navigation Labels -->
+    <string name="nav_home">Home</string>
+    <string name="nav_transactions">Transactions</string>
+    <string name="nav_stats">Stats</string>
+    <string name="nav_profile">Profile</string>
+
+    <!-- Profile Screen -->
+    <string name="profile_title">Profile</string>
+    <string name="financial_overview">Financial Overview</string>
+    <string name="total_income">Total Income</string>
+    <string name="total_expense">Total Expense</string>
+    <string name="savings">Savings</string>
+    <string name="balance">Balance</string>
+    <string name="member_since">Since</string>
+
+    <string name="management">Management</string>
+    <string name="manage_categories">Manage Categories</string>
+    <string name="manage_categories_desc">Add/Edit level 3 categories</string>
+    <string name="manage_payment_modes">Manage Payment Modes</string>
+    <string name="manage_payment_modes_desc">Add/Edit payment methods</string>
+
+    <string name="preferences">Preferences</string>
+    <string name="theme">Theme</string>
+    <string name="notifications">Notifications</string>
+    <string name="currency">Currency</string>
+    <string name="language">Language</string>
+    <string name="default_screen">Default Screen</string>
+
+    <string name="data">Data</string>
+    <string name="backup_data">Backup Data</string>
+    <string name="restore_data">Restore Data</string>
+    <string name="auto_backup">Auto Backup</string>
+    <string name="wifi_only">Wi-Fi Only</string>
+    <string name="charging_only">Charging Only</string>
+    <string name="export_data">Export Data</string>
+
+    <string name="danger_zone">Danger Zone</string>
+    <string name="logout">Logout</string>
+    <string name="delete_account">Delete Account</string>
+
+    <!-- Categories - Expense -->
+    <string name="cat_food">Food &amp; Dining</string>
+    <string name="cat_rest">Restaurants</string>
+    <string name="cat_groc">Groceries</string>
+    <string name="cat_coffee">Coffee/Tea</string>
+    <string name="cat_fastfood">Fast Food</string>
+
+    <string name="cat_shopping">Shopping</string>
+    <string name="cat_clothing">Clothing</string>
+    <string name="cat_electronics">Electronics</string>
+    <string name="cat_home">Home Decor</string>
+    <string name="cat_acc">Accessories</string>
+
+    <string name="cat_transport">Transportation</string>
+    <string name="cat_fuel">Fuel</string>
+    <string name="cat_public">Public Transport</string>
+    <string name="cat_cab">Ride-Sharing (Uber/Ola)</string>
+    <string name="cat_maint">Maintenance</string>
+
+    <string name="cat_bills">Bills &amp; Utilities</string>
+    <string name="cat_rent">Rent/Mortgage</string>
+    <string name="cat_electricity">Electricity</string>
+    <string name="cat_water">Water</string>
+    <string name="cat_internet">Internet</string>
+    <string name="cat_mobile">Mobile Recharge</string>
+
+    <string name="cat_health">Health &amp; Wellness</string>
+    <string name="cat_doctor">Doctor/Clinic</string>
+    <string name="cat_pharmacy">Pharmacy</string>
+    <string name="cat_gym">Gym/Sports</string>
+    <string name="cat_insur">Insurance</string>
+
+    <string name="cat_ent">Entertainment</string>
+    <string name="cat_movies">Movies</string>
+    <string name="cat_gaming">Gaming</string>
+    <string name="cat_ott">OTT (Netflix/Prime)</string>
+    <string name="cat_events">Events</string>
+
+    <string name="cat_edu">Education</string>
+    <string name="cat_books">Books</string>
+    <string name="cat_courses">Courses</string>
+    <string name="cat_tuition">Tuition Fees</string>
+
+    <string name="cat_invest">Investments</string>
+    <string name="cat_stocks">Stocks</string>
+    <string name="cat_mf">Mutual Funds</string>
+    <string name="cat_gold">Gold</string>
+    <string name="cat_realestate">Real Estate</string>
+
+    <string name="cat_personal">Personal Care</string>
+    <string name="cat_salon">Salon/Spa</string>
+    <string name="cat_cosmetics">Cosmetics</string>
+    <string name="cat_laundry">Laundry</string>
+
+    <string name="cat_misc">Miscellaneous</string>
+    <string name="cat_gifts">Gifts</string>
+    <string name="cat_donation">Donations</string>
+    <string name="cat_taxes">Taxes</string>
+    <string name="cat_other">Other Expenses</string>
+
+    <!-- Categories - Income -->
+    <string name="cat_active_inc">Active Income</string>
+    <string name="cat_salary">Salary</string>
+    <string name="cat_business">Business Income</string>
+    <string name="cat_freelance">Freelancing</string>
+
+    <string name="cat_passive_inc">Passive Income</string>
+    <string name="cat_dividends">Dividends</string>
+    <string name="cat_interest">Interest</string>
+    <string name="cat_rent_inc">Rental Income</string>
+    <string name="cat_royalties">Royalties</string>
+
+    <string name="cat_occ_inc">Occasional Income</string>
+    <string name="cat_occ_gifts">Gifts (Occasional)</string>
+    <string name="cat_refunds">Refunds</string>
+    <string name="cat_tax_rebate">Tax Rebate</string>
+    <string name="cat_awards">Awards</string>
+
+</resources>
