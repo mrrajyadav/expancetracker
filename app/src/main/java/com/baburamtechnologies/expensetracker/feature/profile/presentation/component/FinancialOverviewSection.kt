@@ -8,7 +8,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Diamond
-import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.filled.Savings
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -21,6 +20,7 @@ import androidx.compose.ui.unit.dp
 import com.baburamtechnologies.expensetracker.R
 import com.baburamtechnologies.expensetracker.core.designsystem.component.AppStatCard
 import com.baburamtechnologies.expensetracker.core.designsystem.theme.AccentPurple
+import com.baburamtechnologies.expensetracker.core.util.toFormattedCurrency
 import com.baburamtechnologies.expensetracker.feature.profile.presentation.ProfileUiState
 
 @Composable
@@ -37,21 +37,21 @@ fun FinancialOverviewSection(uiState: ProfileUiState) {
             AppStatCard(
                 modifier = Modifier.weight(1f),
                 title = stringResource(R.string.total_income),
-                value = "₹${uiState.totalIncome}",
+                value = uiState.totalIncome.toFormattedCurrency(),
                 icon = Icons.Default.Savings,
                 iconColor = Color(0xFF10B981)
             )
             AppStatCard(
                 modifier = Modifier.weight(1f),
                 title = stringResource(R.string.total_expense),
-                value = "₹${uiState.totalExpense}",
+                value = uiState.totalExpense.toFormattedCurrency(),
                 icon = Icons.Default.AccountBalanceWallet,
                 iconColor = Color(0xFFEF4444)
             )
             AppStatCard(
                 modifier = Modifier.weight(1f),
                 title = stringResource(R.string.savings),
-                value = "₹${uiState.savings}",
+                value = uiState.savings.toFormattedCurrency(),
                 icon = Icons.Default.Diamond,
                 iconColor = Color(0xFF8B5CF6)
             )

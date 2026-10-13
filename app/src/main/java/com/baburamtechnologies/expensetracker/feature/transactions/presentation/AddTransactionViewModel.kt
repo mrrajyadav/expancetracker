@@ -4,6 +4,7 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.baburamtechnologies.expensetracker.core.security.SessionManager
+import com.baburamtechnologies.expensetracker.core.util.MoneyUtils
 import com.baburamtechnologies.expensetracker.feature.settings.domain.model.PaymentMode
 import com.baburamtechnologies.expensetracker.feature.settings.domain.usecase.GetActivePaymentModesUseCase
 import com.baburamtechnologies.expensetracker.feature.transactions.domain.model.Category
@@ -50,7 +51,7 @@ class AddTransactionViewModel @Inject constructor(
                 transactionWithCategory?.let { item ->
                     val t = item.transaction
                     _uiState.update { it.copy(
-                        amount = t.amount.toString(),
+                        amount = MoneyUtils.paiseToInputString(t.amount),
                         type = t.type,
                         selectedLevel1Category = item.categoryLevel1,
                         selectedLevel2Category = item.categoryLevel2,
@@ -93,7 +94,8 @@ class AddTransactionViewModel @Inject constructor(
     fun onAmountChange(value: String) {
         if (value.count { it == '.' } > 1) return
         if (value.any { !it.isDigit() && it != '.' }) return
-        
+        if (value.contains('.') && value.substringAfter('.').length > 2) return
+
         _uiState.update { 
             it.copy(
                 amount = value, 
@@ -199,8 +201,8 @@ class AddTransactionViewModel @Inject constructor(
 
     private fun validateForm() {
         val state = _uiState.value
-        val amountValue = state.amount.toDoubleOrNull() ?: 0.0
-        val isValid = amountValue > 0 &&
+        val parsedPaise = MoneyUtils.parseAmountToPaise(state.amount)
+        val isValid = parsedPaise != null && parsedPaise > 0L &&
                 state.selectedLevel1Category != null &&
                 state.selectedLevel2Category != null &&
                 state.selectedPaymentMode != null
@@ -213,9 +215,9 @@ class AddTransactionViewModel @Inject constructor(
         val state = _uiState.value
         
         val errors = mutableMapOf<String, String>()
-        val amountValue = state.amount.toDoubleOrNull() ?: 0.0
+        val parsedPaise = MoneyUtils.parseAmountToPaise(state.amount)
         
-        if (amountValue <= 0) errors[AddTransactionUiState.FIELD_AMOUNT] = "Enter valid amount"
+        if (parsedPaise == null || parsedPaise <= 0L) errors[AddTransactionUiState.FIELD_AMOUNT] = "Enter valid positive amount (max 2 decimals)"
         if (state.selectedLevel1Category == null) errors[AddTransactionUiState.FIELD_CATEGORY_L1] = "Required"
         if (state.selectedLevel2Category == null) errors[AddTransactionUiState.FIELD_CATEGORY_L2] = "Required"
         if (state.selectedPaymentMode == null) errors[AddTransactionUiState.FIELD_PAYMENT_MODE] = "Required"
@@ -232,6 +234,7 @@ class AddTransactionViewModel @Inject constructor(
         if (_uiState.value.isLoading) return
         val state = _uiState.value
         val userId = sessionManager.getCurrentUserId() ?: return
+        val amountInPaise = MoneyUtils.parseAmountToPaise(state.amount) ?: return
 
         val now = Instant.now().toString()
         val transactionDate = Instant.ofEpochMilli(state.dateMillis).toString()
@@ -239,7 +242,7 @@ class AddTransactionViewModel @Inject constructor(
         val transaction = Transaction(
             id = transactionId ?: UUID.randomUUID().toString(),
             userId = userId,
-            amount = state.amount.toDoubleOrNull() ?: 0.0,
+            amount = amountInPaise,
             type = state.type,
             categoryLevel1Id = state.selectedLevel1Category!!.id,
             categoryLevel2Id = state.selectedLevel2Category!!.id,

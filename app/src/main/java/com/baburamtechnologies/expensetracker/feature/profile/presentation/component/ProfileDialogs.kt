@@ -109,11 +109,11 @@ fun DeleteAccountDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Delete Account?", color = AccentRed) },
+        title = { Text("Delete Account permanently?", color = AccentRed) },
         containerColor = CardBg,
         text = {
             Text(
-                "This action is permanent. All your data will be wiped from our servers and your local device. This cannot be undone.",
+                "This action is permanent and cannot be undone.\n\nDeleting your account will permanently wipe:\n• All local financial records, transactions & categories\n• Encrypted cloud backup files on Google Drive\n• Stored backup encryption keys & app preferences from this device\n• Your user authentication account",
                 style = MaterialTheme.typography.bodyMedium,
                 color = TextPrimary
             )
@@ -123,7 +123,7 @@ fun DeleteAccountDialog(
                 onClick = onConfirm,
                 colors = ButtonDefaults.buttonColors(containerColor = AccentRed)
             ) {
-                Text("Delete Permanently")
+                Text("Delete Everything")
             }
         },
         dismissButton = {

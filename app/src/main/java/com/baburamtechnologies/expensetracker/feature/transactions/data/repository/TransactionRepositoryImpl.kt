@@ -38,9 +38,9 @@ class TransactionRepositoryImpl @Inject constructor(
     @OptIn(ExperimentalCoroutinesApi::class)
     override fun getTransactionSummary(startDate: String, endDate: String): Flow<TransactionSummary> {
         return sessionManager.userIdFlow.flatMapLatest { userId ->
-            if (userId == null) flowOf(TransactionSummary(0.0, 0.0, 0.0))
+            if (userId == null) flowOf(TransactionSummary(0L, 0L, 0L))
             else localDataSource.getTransactionSummary(userId, startDate, endDate).map { result ->
-                result?.toDomain() ?: TransactionSummary(0.0, 0.0, 0.0)
+                result?.toDomain() ?: TransactionSummary(0L, 0L, 0L)
             }
         }
     }
@@ -64,11 +64,16 @@ class TransactionRepositoryImpl @Inject constructor(
     }
 
     override suspend fun getTransactionById(id: String): TransactionWithCategory? = withContext(ioDispatcher) {
-        localDataSource.getTransactionWithCategoryById(id)?.toDomain()
+        val currentUserId = sessionManager.getCurrentUserId() ?: return@withContext null
+        localDataSource.getTransactionWithCategoryById(id, currentUserId)?.toDomain()
     }
 
     override suspend fun addTransaction(transaction: Transaction): Result<Unit> = withContext(ioDispatcher) {
         runCatching {
+            val currentUserId = sessionManager.getCurrentUserId() ?: throw IllegalStateException("User session not found")
+            if (transaction.userId != currentUserId) {
+                throw IllegalArgumentException("Transaction userId does not match authenticated user")
+            }
             validateTransaction(transaction)
             localDataSource.insertTransaction(transaction.toEntity())
         }
@@ -76,11 +81,20 @@ class TransactionRepositoryImpl @Inject constructor(
 
     override suspend fun updateTransaction(transaction: Transaction): Result<Unit> = withContext(ioDispatcher) {
         runCatching {
+            val currentUserId = sessionManager.getCurrentUserId() ?: throw IllegalStateException("User session not found")
+            if (transaction.userId != currentUserId) {
+                throw IllegalArgumentException("Transaction userId does not match authenticated user")
+            }
             validateTransaction(transaction)
-            val existing = localDataSource.getTransactionById(transaction.id)
-                ?: throw IllegalArgumentException("Transaction not found")
-            
+            val existing = localDataSource.getTransactionById(transaction.id, currentUserId)
+                ?: throw IllegalArgumentException("Transaction not found or access denied")
+
+            if (existing.userId != currentUserId) {
+                throw IllegalArgumentException("Ownership mismatch")
+            }
+
             val updated = transaction.toEntity().copy(
+                userId = currentUserId,
                 createdAt = existing.createdAt
             )
             localDataSource.updateTransaction(updated)
@@ -89,8 +103,14 @@ class TransactionRepositoryImpl @Inject constructor(
 
     override suspend fun deleteTransaction(id: String): Result<Unit> = withContext(ioDispatcher) {
         runCatching {
+            val currentUserId = sessionManager.getCurrentUserId() ?: throw IllegalStateException("User session not found")
+            val existing = localDataSource.getTransactionById(id, currentUserId)
+                ?: throw IllegalArgumentException("Transaction not found or access denied")
+            if (existing.userId != currentUserId) {
+                throw IllegalArgumentException("Ownership mismatch")
+            }
             val now = Instant.now().toString()
-            localDataSource.softDeleteTransaction(id, now)
+            localDataSource.softDeleteTransaction(id, currentUserId, now)
         }
     }
 
@@ -100,19 +120,19 @@ class TransactionRepositoryImpl @Inject constructor(
     }
 
     private suspend fun validateTransaction(transaction: Transaction) {
-        if (transaction.amount <= 0) {
+        if (transaction.amount <= 0L) {
             throw IllegalArgumentException("Amount must be greater than zero")
         }
-        
+
         val l1 = categoryRepository.getCategoryById(transaction.categoryLevel1Id)
             ?: throw IllegalArgumentException("Level 1 category not found")
         val l2 = categoryRepository.getCategoryById(transaction.categoryLevel2Id)
             ?: throw IllegalArgumentException("Level 2 category not found")
-        
+
         if (l2.parentId != l1.id) {
             throw IllegalArgumentException("Level 2 category must be a child of Level 1")
         }
-        
+
         if (transaction.categoryLevel3Id != null) {
             val l3 = categoryRepository.getCategoryById(transaction.categoryLevel3Id)
                 ?: throw IllegalArgumentException("Level 3 category not found")

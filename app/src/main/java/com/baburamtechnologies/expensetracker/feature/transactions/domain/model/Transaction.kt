@@ -3,7 +3,7 @@ package com.baburamtechnologies.expensetracker.feature.transactions.domain.model
 data class Transaction(
     val id: String,
     val userId: String,
-    val amount: Double,
+    val amount: Long,
     val type: TransactionType,
     val categoryLevel1Id: String,
     val categoryLevel2Id: String,
@@ -24,15 +24,15 @@ data class TransactionWithCategory(
 )
 
 data class TransactionSummary(
-    val totalIncome: Double,
-    val totalExpense: Double,
-    val totalBalance: Double
+    val totalIncome: Long,
+    val totalExpense: Long,
+    val totalBalance: Long
 )
 
 data class CategorySummary(
     val categoryId: String,
     val categoryName: String,
-    val totalAmount: Double
+    val totalAmount: Long
 )
 
 enum class TransactionType {

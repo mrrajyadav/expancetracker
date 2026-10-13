@@ -42,30 +42,36 @@ interface TransactionDao {
     @Update
     suspend fun updateTransaction(transaction: TransactionEntity)
 
-    @Query("SELECT * FROM transactions WHERE id = :id")
-    suspend fun getTransactionById(id: String): TransactionEntity?
+    @Query("SELECT * FROM transactions WHERE id = :id AND user_id = :userId AND is_deleted = 0")
+    suspend fun getTransactionById(id: String, userId: String): TransactionEntity?
 
     @Transaction
-    @Query("SELECT * FROM transactions WHERE id = :id")
-    suspend fun getTransactionWithCategoryById(id: String): TransactionWithCategoryEntity?
+    @Query("SELECT * FROM transactions WHERE id = :id AND user_id = :userId AND is_deleted = 0")
+    suspend fun getTransactionWithCategoryById(id: String, userId: String): TransactionWithCategoryEntity?
 
-    @Query("UPDATE transactions SET is_deleted = 1, updated_at = :updatedAt WHERE id = :id")
-    suspend fun softDeleteTransaction(id: String, updatedAt: String)
+    @Query("UPDATE transactions SET is_deleted = 1, updated_at = :updatedAt WHERE id = :id AND user_id = :userId")
+    suspend fun softDeleteTransaction(id: String, userId: String, updatedAt: String)
 
-    @Query("DELETE FROM transactions WHERE id = :id")
-    suspend fun hardDeleteTransaction(id: String)
+    @Query("DELETE FROM transactions WHERE id = :id AND user_id = :userId")
+    suspend fun hardDeleteTransaction(id: String, userId: String)
 
     @Query("SELECT COUNT(*) FROM transactions WHERE user_id = :userId AND (category_level1_id = :categoryId OR category_level2_id = :categoryId OR category_level3_id = :categoryId) AND is_deleted = 0")
     suspend fun getTransactionCountByCategory(userId: String, categoryId: String): Int
+
+    @Query("SELECT * FROM transactions WHERE user_id = :userId")
+    suspend fun getAllTransactionsForUser(userId: String): List<TransactionEntity>
+
+    @Query("DELETE FROM transactions WHERE user_id = :userId")
+    suspend fun deleteTransactionsForUser(userId: String)
 }
 
 data class TransactionSummaryResult(
-    val totalIncome: Double?,
-    val totalExpense: Double?
+    val totalIncome: Long?,
+    val totalExpense: Long?
 )
 
 data class CategorySummaryResult(
     val categoryId: String,
     val categoryName: String,
-    val totalAmount: Double
+    val totalAmount: Long
 )

@@ -142,7 +142,7 @@ class TransactionsViewModel @Inject constructor(
 
 data class TransactionsUiState(
     val transactions: List<TransactionWithCategory> = emptyList(),
-    val summary: TransactionSummary = TransactionSummary(0.0, 0.0, 0.0),
+    val summary: TransactionSummary = TransactionSummary(0L, 0L, 0L),
     val isLoading: Boolean = true,
     val selectedMonth: YearMonth = YearMonth.now(),
     val customDateRange: Pair<Long, Long>? = null,

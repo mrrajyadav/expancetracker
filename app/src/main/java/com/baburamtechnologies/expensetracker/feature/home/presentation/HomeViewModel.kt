@@ -92,7 +92,7 @@ class HomeViewModel @Inject constructor(
 }
 
 data class HomeUiState(
-    val summary: TransactionSummary = TransactionSummary(0.0, 0.0, 0.0),
+    val summary: TransactionSummary = TransactionSummary(0L, 0L, 0L),
     val categoryBreakdown: List<CategorySummary> = emptyList(),
     val isLoading: Boolean = false,
     val selectedMonth: YearMonth = YearMonth.now(),

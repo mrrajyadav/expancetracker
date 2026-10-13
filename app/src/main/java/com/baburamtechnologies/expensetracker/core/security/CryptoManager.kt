@@ -77,7 +77,14 @@ class CryptoManager @Inject constructor() {
         return key
     }
 
-    fun deriveMasterKey(firebaseUid: String, salt: ByteArray, iterations: Int = 310000): SecretKeySpec {
+    fun deriveMasterKey(passphraseOrSecret: String, salt: ByteArray, iterations: Int = 310000): SecretKeySpec {
+        val factory = SecretKeyFactory.getInstance(pbkdf2Algorithm)
+        val spec: KeySpec = PBEKeySpec(passphraseOrSecret.toCharArray(), salt, iterations, keyLength)
+        val tmp = factory.generateSecret(spec).encoded
+        return SecretKeySpec(tmp, keyAlgorithm)
+    }
+
+    fun deriveLegacyMasterKey(firebaseUid: String, salt: ByteArray, iterations: Int = 310000): SecretKeySpec {
         val internalSecret = "ET_BACKUP_INTERNAL_SECRET"
         val combinedSecret = internalSecret + firebaseUid
         val factory = SecretKeyFactory.getInstance(pbkdf2Algorithm)

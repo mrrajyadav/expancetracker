@@ -13,4 +13,6 @@ interface BackupRepository {
     suspend fun autoBackup(userEmail: String, firebaseUid: String): Result<Unit>
 
     suspend fun clearLocalData(): Result<Unit>
+    suspend fun deleteUserData(firebaseUid: String): Result<Unit>
+    suspend fun deleteAllCloudBackups(userEmail: String): Result<Unit>
 }

@@ -11,10 +11,10 @@ interface TransactionLocalDataSource {
     fun getCategoryBreakdown(userId: String, startDate: String, endDate: String): Flow<List<CategorySummaryResult>>
     suspend fun insertTransaction(transaction: TransactionEntity)
     suspend fun updateTransaction(transaction: TransactionEntity)
-    suspend fun getTransactionById(id: String): TransactionEntity?
-    suspend fun getTransactionWithCategoryById(id: String): TransactionWithCategoryEntity?
-    suspend fun softDeleteTransaction(id: String, updatedAt: String)
-    suspend fun deleteTransaction(id: String)
+    suspend fun getTransactionById(id: String, userId: String): TransactionEntity?
+    suspend fun getTransactionWithCategoryById(id: String, userId: String): TransactionWithCategoryEntity?
+    suspend fun softDeleteTransaction(id: String, userId: String, updatedAt: String)
+    suspend fun deleteTransaction(id: String, userId: String)
     suspend fun getTransactionCountByCategory(userId: String, categoryId: String): Int
 }
 
@@ -42,20 +42,20 @@ class TransactionLocalDataSourceImpl @Inject constructor(
         transactionDao.updateTransaction(transaction)
     }
 
-    override suspend fun getTransactionById(id: String): TransactionEntity? {
-        return transactionDao.getTransactionById(id)
+    override suspend fun getTransactionById(id: String, userId: String): TransactionEntity? {
+        return transactionDao.getTransactionById(id, userId)
     }
 
-    override suspend fun getTransactionWithCategoryById(id: String): TransactionWithCategoryEntity? {
-        return transactionDao.getTransactionWithCategoryById(id)
+    override suspend fun getTransactionWithCategoryById(id: String, userId: String): TransactionWithCategoryEntity? {
+        return transactionDao.getTransactionWithCategoryById(id, userId)
     }
 
-    override suspend fun softDeleteTransaction(id: String, updatedAt: String) {
-        transactionDao.softDeleteTransaction(id, updatedAt)
+    override suspend fun softDeleteTransaction(id: String, userId: String, updatedAt: String) {
+        transactionDao.softDeleteTransaction(id, userId, updatedAt)
     }
 
-    override suspend fun deleteTransaction(id: String) {
-        transactionDao.hardDeleteTransaction(id)
+    override suspend fun deleteTransaction(id: String, userId: String) {
+        transactionDao.hardDeleteTransaction(id, userId)
     }
 
     override suspend fun getTransactionCountByCategory(userId: String, categoryId: String): Int {

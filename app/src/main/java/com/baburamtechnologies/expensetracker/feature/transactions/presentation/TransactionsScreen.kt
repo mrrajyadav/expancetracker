@@ -27,6 +27,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.baburamtechnologies.expensetracker.core.designsystem.theme.*
+import com.baburamtechnologies.expensetracker.core.util.MoneyUtils
+import com.baburamtechnologies.expensetracker.core.util.toFormattedCurrency
 import com.baburamtechnologies.expensetracker.feature.transactions.domain.model.TransactionType
 import com.baburamtechnologies.expensetracker.core.designsystem.component.ResponsiveContainer
 import com.baburamtechnologies.expensetracker.feature.transactions.domain.model.TransactionWithCategory
@@ -73,7 +75,7 @@ fun TransactionsScreen(
             id = item.transaction.id,
             title = item.categoryLevel1.getDisplayName(context),
             dateTime = item.transaction.date,
-            amount = "${if (isIncome) "+" else "-"} ₹${item.transaction.amount}",
+            amount = "${if (isIncome) "+" else "-"} ${item.transaction.amount.toFormattedCurrency()}",
             isIncome = isIncome,
             icon = if (isIncome) Icons.Default.Savings else Icons.Default.AccountBalanceWallet,
             iconBg = if (isIncome) Color(0xFF10B981) else Color(0xFF8B5CF6),
@@ -141,15 +143,15 @@ fun TransactionsScreen(
                                 ) {
                                     Column {
                                         Text("↑ Income", color = AccentGreen, fontSize = 12.sp)
-                                        Text("₹${uiState.summary.totalIncome}", color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                                        Text(uiState.summary.totalIncome.toFormattedCurrency(), color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 16.sp)
                                     }
                                     Column {
                                         Text("↓ Expense", color = AccentRed, fontSize = 12.sp)
-                                        Text("₹${uiState.summary.totalExpense}", color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                                        Text(uiState.summary.totalExpense.toFormattedCurrency(), color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 16.sp)
                                     }
                                     Column {
                                         Text("Balance", color = TextSecondary, fontSize = 12.sp)
-                                        Text("₹${uiState.summary.totalBalance}", color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                                        Text(uiState.summary.totalBalance.toFormattedCurrency(), color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 16.sp)
                                     }
                                 }
                             }
@@ -329,7 +331,7 @@ fun TransactionsScreen(
     // Review Transaction Dialog
     uiState.transactionToReview?.let { transaction ->
         ReviewTransactionDialog(
-            amount = transaction.transaction.amount.toString(),
+            amount = MoneyUtils.paiseToInputString(transaction.transaction.amount),
             type = transaction.transaction.type.name,
             categoryL1 = transaction.categoryLevel1.displayName(),
             categoryL2 = transaction.categoryLevel2.displayName(),

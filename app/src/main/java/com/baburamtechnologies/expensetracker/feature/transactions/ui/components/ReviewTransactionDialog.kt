@@ -17,7 +17,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import com.baburamtechnologies.expensetracker.core.designsystem.theme.*
-import java.text.NumberFormat
+import com.baburamtechnologies.expensetracker.core.util.MoneyUtils
+import com.baburamtechnologies.expensetracker.core.util.toFormattedCurrency
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -36,8 +37,7 @@ fun ReviewTransactionDialog(
     onDismiss: () -> Unit
 ) {
     val formattedAmount = remember(amount) {
-        val parsed = amount.toDoubleOrNull() ?: 0.0
-        NumberFormat.getCurrencyInstance(Locale("en", "IN")).format(parsed)
+        MoneyUtils.parseAmountToPaise(amount)?.toFormattedCurrency() ?: "₹0.00"
     }
 
     val formattedDate = remember(dateMillis) {

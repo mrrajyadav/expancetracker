@@ -7,7 +7,9 @@ import androidx.room.Index
 import androidx.room.PrimaryKey
 import com.baburamtechnologies.expensetracker.core.database.model.ProfileEntity
 import com.baburamtechnologies.expensetracker.feature.settings.data.local.model.PaymentModeEntity
+import kotlinx.serialization.Serializable
 
+@Serializable
 @Entity(
     tableName = "transactions",
     foreignKeys = [
@@ -60,7 +62,7 @@ data class TransactionEntity(
     val userId: String,
 
     @ColumnInfo(name = "amount")
-    val amount: Double,
+    val amount: Long,
 
     @ColumnInfo(name = "type")
     val type: String, // INCOME, EXPENSE

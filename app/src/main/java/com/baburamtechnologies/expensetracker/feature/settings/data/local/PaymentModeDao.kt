@@ -29,4 +29,10 @@ interface PaymentModeDao {
 
     @Query("UPDATE payment_modes SET is_active = :isActive WHERE id = :id")
     suspend fun setPaymentModeActive(id: String, isActive: Boolean)
+
+    @Query("SELECT * FROM payment_modes WHERE user_id = :userId")
+    suspend fun getAllPaymentModesForUser(userId: String): List<PaymentModeEntity>
+
+    @Query("DELETE FROM payment_modes WHERE user_id = :userId")
+    suspend fun deletePaymentModesForUser(userId: String)
 }

@@ -3,6 +3,7 @@ package com.baburamtechnologies.expensetracker.feature.profile.presentation
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.baburamtechnologies.expensetracker.core.auth.CurrentUserProvider
+import com.baburamtechnologies.expensetracker.core.backup.domain.BackupRepository
 import com.baburamtechnologies.expensetracker.core.datastore.PreferenceManager
 import com.baburamtechnologies.expensetracker.feature.auth.domain.repository.AuthRepository
 import com.baburamtechnologies.expensetracker.feature.profile.domain.usecase.GetProfileUseCase
@@ -29,7 +30,8 @@ class ProfileViewModel @Inject constructor(
     private val updateProfileUseCase: UpdateProfileUseCase,
     private val preferenceManager: PreferenceManager,
     private val currentUserProvider: CurrentUserProvider,
-    private val authRepository: AuthRepository
+    private val authRepository: AuthRepository,
+    private val backupRepository: BackupRepository
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(ProfileUiState(isLoading = true))
@@ -138,15 +140,18 @@ class ProfileViewModel @Inject constructor(
     }
 
     private fun observeSettings() {
-        combine(
-            preferenceManager.lastBackupTime,
-            preferenceManager.autoBackupEnabled
-        ) { lastBackup, autoEnabled ->
-            _uiState.update { it.copy(
-                lastBackupTime = lastBackup ?: "Never",
-                isAutoBackupEnabled = autoEnabled
-            ) }
-        }.launchIn(viewModelScope)
+        val uid = currentUserProvider.userId()
+        if (uid != null) {
+            combine(
+                preferenceManager.lastBackupTime(uid),
+                preferenceManager.autoBackupEnabled(uid)
+            ) { lastBackup, autoEnabled ->
+                _uiState.update { it.copy(
+                    lastBackupTime = lastBackup ?: "Never",
+                    isAutoBackupEnabled = autoEnabled
+                ) }
+            }.launchIn(viewModelScope)
+        }
     }
 
     fun logout() {
@@ -158,11 +163,31 @@ class ProfileViewModel @Inject constructor(
     fun deleteAccount() {
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true) }
-            authRepository.deleteAccount().onSuccess {
-                _effect.emit(ProfileEffect.ShowMessage("Account deleted successfully"))
-                _uiState.update { it.copy(isLoading = false) }
-            }.onFailure { error ->
-                _effect.emit(ProfileEffect.ShowMessage("Deletion failed: ${error.message}"))
+            val userId = currentUserProvider.userId()
+            val email = currentUserProvider.user()?.email
+
+            try {
+                // 1. Delete cloud backups in Google Drive
+                if (!email.isNullOrBlank()) {
+                    backupRepository.deleteAllCloudBackups(email)
+                }
+
+                // 2. Delete local user financial records & encryption keys
+                if (!userId.isNullOrBlank()) {
+                    backupRepository.deleteUserData(userId)
+                }
+
+                // 3. Delete Firebase Auth account
+                authRepository.deleteAccount().onSuccess {
+                    authRepository.signOut()
+                    _effect.emit(ProfileEffect.ShowMessage("Account and all associated local & cloud data deleted successfully"))
+                    _effect.emit(ProfileEffect.RestartApp)
+                }.onFailure { error ->
+                    _effect.emit(ProfileEffect.ShowMessage("Deletion failed: ${error.message}"))
+                }
+            } catch (e: Exception) {
+                _effect.emit(ProfileEffect.ShowMessage("Account deletion cleanup failed: ${e.message}"))
+            } finally {
                 _uiState.update { it.copy(isLoading = false) }
             }
         }
@@ -212,10 +237,10 @@ data class ProfileUiState(
     val name: String = "",
     val email: String = "",
     val phone: String = "",
-    val totalBalance: Double = 0.0,
-    val totalIncome: Double = 0.0,
-    val totalExpense: Double = 0.0,
-    val savings: Double = 0.0,
+    val totalBalance: Long = 0L,
+    val totalIncome: Long = 0L,
+    val totalExpense: Long = 0L,
+    val savings: Long = 0L,
     val transactionCount: Int = 0,
     val memberSince: String = "---",
     val lastBackupTime: String = "Never",

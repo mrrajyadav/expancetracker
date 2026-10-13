@@ -89,8 +89,8 @@ fun Category.toEntity(createdAt: String, updatedAt: String, profileId: String? =
 )
 
 fun TransactionSummaryResult.toDomain(): TransactionSummary {
-    val income = totalIncome ?: 0.0
-    val expense = totalExpense ?: 0.0
+    val income = totalIncome ?: 0L
+    val expense = totalExpense ?: 0L
     return TransactionSummary(
         totalIncome = income,
         totalExpense = expense,

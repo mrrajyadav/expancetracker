@@ -32,9 +32,10 @@ class BackupManagementViewModel @Inject constructor(
     }
 
     private fun observeSettings() {
+        val uid = currentUserProvider.userId() ?: return
         combine(
-            preferenceManager.lastBackupTime,
-            preferenceManager.autoBackupEnabled
+            preferenceManager.lastBackupTime(uid),
+            preferenceManager.autoBackupEnabled(uid)
         ) { lastBackupTime, autoBackupEnabled ->
             BackupManagementUiState(
                 lastBackupTime = lastBackupTime ?: "Never",
@@ -59,7 +60,8 @@ class BackupManagementViewModel @Inject constructor(
 
     fun onAutoBackupToggled(enabled: Boolean) {
         viewModelScope.launch {
-            preferenceManager.setAutoBackupEnabled(enabled)
+            val uid = currentUserProvider.userId() ?: return@launch
+            preferenceManager.setAutoBackupEnabled(uid, enabled)
             updateSchedule()
         }
     }

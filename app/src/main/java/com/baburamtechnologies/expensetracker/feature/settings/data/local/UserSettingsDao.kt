@@ -14,4 +14,10 @@ interface UserSettingsDao {
 
     @Update
     suspend fun updateUserSettings(settings: UserSettingsEntity)
+
+    @Query("SELECT * FROM user_settings WHERE user_id = :userId")
+    suspend fun getUserSettingsForUser(userId: String): UserSettingsEntity?
+
+    @Query("DELETE FROM user_settings WHERE user_id = :userId")
+    suspend fun deleteUserSettingsForUser(userId: String)
 }

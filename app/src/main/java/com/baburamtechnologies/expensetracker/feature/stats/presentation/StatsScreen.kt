@@ -24,6 +24,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.baburamtechnologies.expensetracker.core.designsystem.theme.*
+import com.baburamtechnologies.expensetracker.core.util.toFormattedCurrency
 import com.baburamtechnologies.expensetracker.core.designsystem.component.ResponsiveContainer
 import com.baburamtechnologies.expensetracker.feature.transactions.ui.components.DateRangeHeader
 import com.baburamtechnologies.expensetracker.feature.transactions.ui.resolveCategoryName
@@ -81,7 +82,7 @@ fun StatsScreen(
                     ) {
                         item { Spacer(modifier = Modifier.height(4.dp)) }
 
-                        if (uiState.isLoading && uiState.summary.totalIncome == 0.0 && uiState.summary.totalExpense == 0.0 && !pullToRefreshState.isRefreshing) {
+                        if (uiState.isLoading && uiState.summary.totalIncome == 0L && uiState.summary.totalExpense == 0L && !pullToRefreshState.isRefreshing) {
                             item {
                                 Box(modifier = Modifier.fillMaxWidth().height(200.dp), contentAlignment = Alignment.Center) {
                                     CircularProgressIndicator(color = AccentPurple)
@@ -91,9 +92,9 @@ fun StatsScreen(
                             // Summary Cards Row
                             item {
                                 Row(horizontalArrangement = Arrangement.spacedBy(ExpenseTrackerTheme.dimensions.paddingSmall)) {
-                                    MiniStatCard(Modifier.weight(1f), "Income", "₹${uiState.summary.totalIncome}", Icons.Default.Savings, Color(0xFF10B981))
-                                    MiniStatCard(Modifier.weight(1f), "Expense", "₹${uiState.summary.totalExpense}", Icons.Default.AccountBalanceWallet, Color(0xFFEF4444))
-                                    MiniStatCard(Modifier.weight(1f), "Savings", "₹${uiState.summary.totalBalance}", Icons.Default.Diamond, Color(0xFF8B5CF6))
+                                    MiniStatCard(Modifier.weight(1f), "Income", uiState.summary.totalIncome.toFormattedCurrency(), Icons.Default.Savings, Color(0xFF10B981))
+                                    MiniStatCard(Modifier.weight(1f), "Expense", uiState.summary.totalExpense.toFormattedCurrency(), Icons.Default.AccountBalanceWallet, Color(0xFFEF4444))
+                                    MiniStatCard(Modifier.weight(1f), "Savings", uiState.summary.totalBalance.toFormattedCurrency(), Icons.Default.Diamond, Color(0xFF8B5CF6))
                                 }
                             }
 
@@ -114,7 +115,7 @@ fun StatsScreen(
                                         } else {
                                             val totalExpense = uiState.categoryBreakdown.sumOf { it.totalAmount }
                                             uiState.categoryBreakdown.forEach { category ->
-                                                val progress = if (totalExpense > 0) (category.totalAmount / totalExpense).toFloat() else 0f
+                                                val progress = if (totalExpense > 0L) (category.totalAmount.toFloat() / totalExpense.toFloat()) else 0f
                                                 val percentage = "%.1f%%".format(progress * 100)
                                                 
                                                 val icon = Icons.Default.GridView
@@ -123,7 +124,7 @@ fun StatsScreen(
 
                                                 CategorySpendingRow(
                                                     name = category.categoryName.resolveCategoryName(),
-                                                    amount = "₹${category.totalAmount}",
+                                                    amount = category.totalAmount.toFormattedCurrency(),
                                                     percent = percentage,
                                                     progress = progress,
                                                     color = color,

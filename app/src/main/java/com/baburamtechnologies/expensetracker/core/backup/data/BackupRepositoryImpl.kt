@@ -2,18 +2,28 @@
 package com.baburamtechnologies.expensetracker.core.backup.data
 
 import android.content.Context
+import android.database.sqlite.SQLiteDatabase
 import android.util.Base64
+import android.util.Log
+import androidx.room.withTransaction
+import androidx.work.WorkManager
 import com.baburamtechnologies.expensetracker.BuildConfig
 import com.baburamtechnologies.expensetracker.core.backup.domain.BackupRepository
 import com.baburamtechnologies.expensetracker.core.backup.domain.BackupState
 import com.baburamtechnologies.expensetracker.core.backup.domain.RestoreState
 import com.baburamtechnologies.expensetracker.core.backup.model.BackupMetadata
+import com.baburamtechnologies.expensetracker.core.backup.model.UserBackupPayload
 import com.baburamtechnologies.expensetracker.core.database.ExpenseTrackerDatabase
+import com.baburamtechnologies.expensetracker.core.database.model.ProfileEntity
 import com.baburamtechnologies.expensetracker.core.datastore.PreferenceManager
 import com.baburamtechnologies.expensetracker.core.security.CryptoManager
+import com.baburamtechnologies.expensetracker.feature.settings.data.local.model.PaymentModeEntity
+import com.baburamtechnologies.expensetracker.feature.settings.data.local.model.UserSettingsEntity
+import com.baburamtechnologies.expensetracker.feature.transactions.data.local.model.CategoryEntity
+import com.baburamtechnologies.expensetracker.feature.transactions.data.local.model.TransactionEntity
+import com.google.api.client.googleapis.extensions.android.gms.auth.UserRecoverableAuthIOException
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -26,9 +36,6 @@ import java.time.Instant
 import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
-import com.google.api.client.googleapis.extensions.android.gms.auth.UserRecoverableAuthIOException
-import androidx.work.WorkManager
-import android.util.Log
 
 @Singleton
 class BackupRepositoryImpl @Inject constructor(
@@ -52,7 +59,6 @@ class BackupRepositoryImpl @Inject constructor(
     private val _restoreState = MutableStateFlow<RestoreState>(RestoreState.Idle)
     override val restoreState: StateFlow<RestoreState> = _restoreState.asStateFlow()
 
-    private val dbName = ExpenseTrackerDatabase.DATABASE_NAME
     private val encryptedFileName = "expense_backup.enc"
     private val metadataFileName = "backup_metadata.json"
 
@@ -77,29 +83,25 @@ class BackupRepositoryImpl @Inject constructor(
         try {
             _backupState.value = BackupState.Preparing
             
-            // Validate email
             if (userEmail.isBlank()) throw IllegalArgumentException("User email is required for backup")
+            if (firebaseUid.isBlank()) throw IllegalArgumentException("User ID is required for backup")
             
             driveDataSource.setupService(userEmail)
             
             _backupState.value = BackupState.Snapshotting
-            try {
-                database.query("PRAGMA wal_checkpoint(FULL)", null).close()
-            } catch (e: Exception) {
-                // Ignore checkpoint errors, just proceed with copy
-            }
-            val dbFile = context.getDatabasePath(dbName)
-            if (!dbFile.exists()) return@withContext Result.failure(Exception("Database file not found"))
+            
+            val payload = createUserBackupPayload(firebaseUid)
+            val payloadBytes = stableJson.encodeToString(payload).toByteArray(Charsets.UTF_8)
             
             _backupState.value = BackupState.Encrypting
             val salt = cryptoManager.generateSalt()
-            val masterKey = cryptoManager.deriveMasterKey(firebaseUid, salt)
+            val userSecret = preferenceManager.getOrCreateUserBackupSecret(firebaseUid)
+            val masterKey = cryptoManager.deriveMasterKey(userSecret, salt)
             val cloudKey = cryptoManager.generateRandomKey()
             
-            val dbBytes = dbFile.readBytes()
             val dbIv = cryptoManager.generateIv()
-            val encryptedDb = cryptoManager.encrypt(dbBytes, cloudKey, dbIv)
-            val checksum = cryptoManager.calculateChecksum(encryptedDb)
+            val encryptedPayload = cryptoManager.encrypt(payloadBytes, cloudKey, dbIv)
+            val checksum = cryptoManager.calculateChecksum(encryptedPayload)
             
             val keyIv = cryptoManager.generateIv()
             val encryptedCloudKey = cryptoManager.encrypt(cloudKey, masterKey.encoded, keyIv)
@@ -124,9 +126,9 @@ class BackupRepositoryImpl @Inject constructor(
             val signedMetadata = metadata.copy(metadataMac = mac)
             
             _backupState.value = BackupState.UploadingDatabase
-            val encryptedDbFile = File(context.cacheDir, encryptedFileName)
-            encryptedDbFile.writeBytes(encryptedDb)
-            driveDataSource.uploadFile(encryptedDbFile, uniqueDbName, "application/octet-stream")
+            val encryptedDataFile = File(context.cacheDir, encryptedFileName)
+            encryptedDataFile.writeBytes(encryptedPayload)
+            driveDataSource.uploadFile(encryptedDataFile, uniqueDbName, "application/octet-stream")
 
             _backupState.value = BackupState.UploadingMetadata
             val metadataFile = File(context.cacheDir, metadataFileName)
@@ -136,21 +138,22 @@ class BackupRepositoryImpl @Inject constructor(
             val wrappedCloudKey = cryptoManager.wrapKey(cloudKey)
             val wrappedMasterKey = cryptoManager.wrapKey(masterKey.encoded)
             preferenceManager.saveBackupKeys(
+                firebaseUid,
                 Base64.encodeToString(wrappedCloudKey, Base64.NO_WRAP),
                 Base64.encodeToString(wrappedMasterKey, Base64.NO_WRAP)
             )
-            preferenceManager.saveLastBackupTime(Instant.now().toString())
+            preferenceManager.saveLastBackupTime(firebaseUid, Instant.now().toString())
 
             cleanupOldBackups(uniqueDbName)
 
             _backupState.value = BackupState.Completed
             Result.success(Unit)
         } catch (e: UserRecoverableAuthIOException) {
-            android.util.Log.e("BackupRepo", "Auth required", e)
+            Log.e(tag, "Auth required", e)
             _backupState.value = BackupState.AuthorizationRequired(e.intent)
             Result.failure(e)
         } catch (e: Exception) {
-            android.util.Log.e("BackupRepo", "Backup failed: ${e.message}", e)
+            Log.e(tag, "Backup failed: ${e.message}", e)
             _backupState.value = BackupState.Failed(e.message ?: "Unknown error")
             Result.failure(e)
         }
@@ -158,23 +161,32 @@ class BackupRepositoryImpl @Inject constructor(
 
     override suspend fun autoBackup(userEmail: String, firebaseUid: String): Result<Unit> = withContext(Dispatchers.IO) {
         try {
-            // Setup drive service first
+            if (userEmail.isBlank() || firebaseUid.isBlank()) {
+                return@withContext Result.failure(Exception("User credentials missing for auto backup"))
+            }
+
             driveDataSource.setupService(userEmail)
+
+            val metadataFileId = driveDataSource.getFileIdByName(metadataFileName)
+            if (metadataFileId != null) {
+                val tempMetadataFile = File(context.cacheDir, "metadata_auto_check.json")
+                driveDataSource.downloadFile(metadataFileId, tempMetadataFile)
+                val existingMetadata = stableJson.decodeFromString<BackupMetadata>(tempMetadataFile.readText())
+                if (existingMetadata.firebaseUid != firebaseUid) {
+                    Log.w(tag, "[AUTO_BACKUP] Skipped: Drive backup owner (${existingMetadata.firebaseUid}) does not match current user ($firebaseUid)")
+                    return@withContext Result.failure(Exception("Drive backup metadata belongs to a different user"))
+                }
+            }
             
-            // Check if we have wrapped keys in preferences
-            val wrappedCloudKeyBase64 = preferenceManager.wrappedCloudKey.first()
-            val wrappedMasterKeyBase64 = preferenceManager.wrappedMasterKey.first()
+            val wrappedCloudKeyBase64 = preferenceManager.wrappedCloudKey(firebaseUid).first()
+            val wrappedMasterKeyBase64 = preferenceManager.wrappedMasterKey(firebaseUid).first()
             
             val (cloudKey, masterKeyBytes) = if (wrappedCloudKeyBase64 != null && wrappedMasterKeyBase64 != null) {
-                // Use existing keys
                 Pair(
                     cryptoManager.unwrapKey(Base64.decode(wrappedCloudKeyBase64, Base64.NO_WRAP)),
                     cryptoManager.unwrapKey(Base64.decode(wrappedMasterKeyBase64, Base64.NO_WRAP))
                 )
             } else {
-                // If no keys in preferences, it might be the first auto-backup after password removal
-                // or after a fresh install. We need to check if there is metadata on drive.
-                val metadataFileId = driveDataSource.getFileIdByName(metadataFileName)
                 if (metadataFileId == null) {
                     return@withContext Result.failure(Exception("No backup found on drive to perform auto-backup"))
                 }
@@ -184,16 +196,17 @@ class BackupRepositoryImpl @Inject constructor(
                 val existingMetadata = stableJson.decodeFromString<BackupMetadata>(tempMetadataFile.readText())
                 
                 val salt = Base64.decode(existingMetadata.salt, Base64.NO_WRAP)
-                val masterKey = cryptoManager.deriveMasterKey(firebaseUid, salt)
+                val userSecret = preferenceManager.getOrCreateUserBackupSecret(firebaseUid)
+                val masterKey = cryptoManager.deriveMasterKey(userSecret, salt)
                 
                 val keyIv = Base64.decode(existingMetadata.keyIv, Base64.NO_WRAP)
                 val encryptedCloudKey = Base64.decode(existingMetadata.encryptedCloudKey, Base64.NO_WRAP)
                 val cloudKey = cryptoManager.decrypt(encryptedCloudKey, masterKey.encoded, keyIv)
                 
-                // Save them for next time
                 val wrappedCloudKey = cryptoManager.wrapKey(cloudKey)
                 val wrappedMasterKey = cryptoManager.wrapKey(masterKey.encoded)
                 preferenceManager.saveBackupKeys(
+                    firebaseUid,
                     Base64.encodeToString(wrappedCloudKey, Base64.NO_WRAP),
                     Base64.encodeToString(wrappedMasterKey, Base64.NO_WRAP)
                 )
@@ -201,20 +214,16 @@ class BackupRepositoryImpl @Inject constructor(
                 Pair(cloudKey, masterKey.encoded)
             }
             
-            try {
-                database.query("PRAGMA wal_checkpoint(FULL)", null).close()
-            } catch (e: Exception) {
-                // Ignore checkpoint errors
-            }
-            val dbFile = context.getDatabasePath(dbName)
+            val payload = createUserBackupPayload(firebaseUid)
+            val payloadBytes = stableJson.encodeToString(payload).toByteArray(Charsets.UTF_8)
             
             val dbIv = cryptoManager.generateIv()
-            val encryptedDb = cryptoManager.encrypt(dbFile.readBytes(), cloudKey, dbIv)
-            val checksum = cryptoManager.calculateChecksum(encryptedDb)
+            val encryptedPayload = cryptoManager.encrypt(payloadBytes, cloudKey, dbIv)
+            val checksum = cryptoManager.calculateChecksum(encryptedPayload)
             
-            val metadataFileId = driveDataSource.getFileIdByName(metadataFileName) ?: return@withContext Result.failure(Exception("No manual backup found"))
+            val metaId = driveDataSource.getFileIdByName(metadataFileName) ?: return@withContext Result.failure(Exception("No metadata file found"))
             val tempMetadataFile = File(context.cacheDir, "metadata_auto.json")
-            driveDataSource.downloadFile(metadataFileId, tempMetadataFile)
+            driveDataSource.downloadFile(metaId, tempMetadataFile)
             val existingMetadata = stableJson.decodeFromString<BackupMetadata>(tempMetadataFile.readText())
             
             val uniqueDbName = "db_${System.currentTimeMillis()}.enc"
@@ -230,25 +239,25 @@ class BackupRepositoryImpl @Inject constructor(
             val mac = generateStableMetadataMac(newMetadata, masterKeyBytes)
             val signedMetadata = newMetadata.copy(metadataMac = mac)
             
-            val newEncryptedDbFile = File(context.cacheDir, encryptedFileName)
-            newEncryptedDbFile.writeBytes(encryptedDb)
-            driveDataSource.uploadFile(newEncryptedDbFile, uniqueDbName, "application/octet-stream")
+            val newEncryptedDataFile = File(context.cacheDir, encryptedFileName)
+            newEncryptedDataFile.writeBytes(encryptedPayload)
+            driveDataSource.uploadFile(newEncryptedDataFile, uniqueDbName, "application/octet-stream")
 
             val newMetadataFile = File(context.cacheDir, metadataFileName)
             newMetadataFile.writeText(stableJson.encodeToString(signedMetadata))
             driveDataSource.uploadFile(newMetadataFile, metadataFileName, "application/json")
             
-            preferenceManager.saveLastBackupTime(Instant.now().toString())
+            preferenceManager.saveLastBackupTime(firebaseUid, Instant.now().toString())
             cleanupOldBackups(uniqueDbName)
             Result.success(Unit)
         } catch (e: Exception) {
+            Log.e(tag, "Auto backup failed", e)
             Result.failure(e)
         }
     }
 
     override suspend fun restore(userEmail: String, firebaseUid: String): Result<Unit> = withContext(Dispatchers.IO) {
-        val rollbackFile = File(context.cacheDir, "backup_before_restore.db")
-        val tempRestoreFile = File(context.cacheDir, "restore_test.db")
+        val tempRestoreFile = File(context.cacheDir, "restore_temp.bin")
         
         try {
             Log.i(tag, "[RESTORE] STAGE 1: Preparation & Task Cancellation")
@@ -263,6 +272,7 @@ class BackupRepositoryImpl @Inject constructor(
             }
 
             if (userEmail.isBlank()) throw IllegalArgumentException("User email is required for restore")
+            if (firebaseUid.isBlank()) throw IllegalArgumentException("User ID is required for restore")
             driveDataSource.setupService(userEmail)
             
             Log.i(tag, "[RESTORE] STAGE 2: Metadata Download")
@@ -277,44 +287,54 @@ class BackupRepositoryImpl @Inject constructor(
             driveDataSource.downloadFile(metadataFileId, tempMetadataFile)
             val signedMetadata = stableJson.decodeFromString<BackupMetadata>(tempMetadataFile.readText())
             
+            if (signedMetadata.firebaseUid != firebaseUid) {
+                val error = "Backup belongs to a different user (${signedMetadata.firebaseUid})"
+                _restoreState.value = RestoreState.Failed(error)
+                return@withContext Result.failure(Exception(error))
+            }
+
+            // Schema & Version Compatibility Verification
+            val currentSchemaVersion = database.openHelper.readableDatabase.version
+            if (signedMetadata.schemaVersion > currentSchemaVersion) {
+                val error = "Backup schema version (${signedMetadata.schemaVersion}) is higher than current app schema version ($currentSchemaVersion). Please update the app."
+                _restoreState.value = RestoreState.Failed(error)
+                return@withContext Result.failure(Exception(error))
+            }
+
             _restoreState.value = RestoreState.VerifyingIntegrity
             
-            // 1. Recover and validate salt
             val salt = Base64.decode(signedMetadata.salt, Base64.NO_WRAP)
             if (salt.size != 16) {
                 val error = "Invalid backup salt recovered."
                 _restoreState.value = RestoreState.Failed(error)
                 return@withContext Result.failure(Exception(error))
             }
-            Log.d(tag, "[RESTORE] Salt recovered successfully")
             
-            // 2. Derive master key using RECOVERED salt and iterations
-            val masterKey = cryptoManager.deriveMasterKey(firebaseUid, salt, signedMetadata.iterations)
-            
-            // 3. Verify integrity using STABLE canonical representation
+            val userSecret = preferenceManager.getOrCreateUserBackupSecret(firebaseUid)
+            var masterKey = cryptoManager.deriveMasterKey(userSecret, salt, signedMetadata.iterations)
             val expectedMac = generateStableMetadataMac(signedMetadata, masterKey.encoded)
             
             if (signedMetadata.metadataMac != expectedMac) {
-                val error = "Integrity check failed: This backup might be protected by a password from an older version of the app. Please start fresh or use a new backup."
-                _restoreState.value = RestoreState.Failed(error)
-                return@withContext Result.failure(Exception(error))
+                Log.w(tag, "[RESTORE] Primary MAC check failed. Trying legacy master key derivation...")
+                val legacyMasterKey = cryptoManager.deriveLegacyMasterKey(firebaseUid, salt, signedMetadata.iterations)
+                val legacyExpectedMac = generateStableMetadataMac(signedMetadata, legacyMasterKey.encoded)
+                if (signedMetadata.metadataMac == legacyExpectedMac) {
+                    Log.i(tag, "[RESTORE] Legacy master key verified successfully! Migrating backup key...")
+                    masterKey = legacyMasterKey
+                } else {
+                    val error = "Integrity check failed: Backup metadata MAC mismatch."
+                    _restoreState.value = RestoreState.Failed(error)
+                    return@withContext Result.failure(Exception(error))
+                }
             }
 
-            if (signedMetadata.firebaseUid != firebaseUid) {
-                val error = "Backup belongs to a different user"
-                _restoreState.value = RestoreState.Failed(error)
-                return@withContext Result.failure(Exception(error))
-            }
-
-            Log.i(tag, "[RESTORE] STAGE 4: Encrypted DB Download")
+            Log.i(tag, "[RESTORE] STAGE 3: Encrypted Backup Download")
             _restoreState.value = RestoreState.DownloadingDatabase
             
-            val targetDbFile = signedMetadata.dbFileName ?: encryptedFileName
-            Log.d(tag, "[RESTORE] Target database file: $targetDbFile")
-            
-            val dataFileId = driveDataSource.getFileIdByName(targetDbFile)
+            val targetDataFile = signedMetadata.dbFileName ?: encryptedFileName
+            val dataFileId = driveDataSource.getFileIdByName(targetDataFile)
             if (dataFileId == null) {
-                val error = "Encrypted backup not found ($targetDbFile)"
+                val error = "Encrypted backup file not found ($targetDataFile)"
                 _restoreState.value = RestoreState.Failed(error)
                 return@withContext Result.failure(Exception(error))
             }
@@ -323,14 +343,12 @@ class BackupRepositoryImpl @Inject constructor(
             driveDataSource.downloadFile(dataFileId, tempEncryptedFile)
             val encryptedBytes = tempEncryptedFile.readBytes()
             
-            Log.i(tag, "[RESTORE] STAGE 5: Decryption & Checksum Validation")
+            Log.i(tag, "[RESTORE] STAGE 4: Decryption & Checksum Validation")
             _restoreState.value = RestoreState.Decrypting
             val calculatedChecksum = cryptoManager.calculateChecksum(encryptedBytes)
-            Log.d(tag, "[RESTORE] Expected checksum: ${signedMetadata.checksum}")
-            Log.d(tag, "[RESTORE] Calculated checksum: $calculatedChecksum")
             
             if (calculatedChecksum != signedMetadata.checksum) {
-                val error = "Database file corruption detected (checksum mismatch). Expected: ${signedMetadata.checksum}, Got: $calculatedChecksum"
+                val error = "Data corruption detected (checksum mismatch)."
                 _restoreState.value = RestoreState.Failed(error)
                 return@withContext Result.failure(Exception(error))
             }
@@ -340,90 +358,65 @@ class BackupRepositoryImpl @Inject constructor(
             val cloudKey = cryptoManager.decrypt(encryptedCloudKey, masterKey.encoded, keyIv)
             
             val dbIv = Base64.decode(signedMetadata.dbIv, Base64.NO_WRAP)
-            val decryptedDbBytes = cryptoManager.decrypt(encryptedBytes, cloudKey, dbIv)
+            val decryptedBytes = cryptoManager.decrypt(encryptedBytes, cloudKey, dbIv)
             
-            Log.i(tag, "[RESTORE] STAGE 6: SQLite Format Verification")
-            _restoreState.value = RestoreState.ValidatingSchema
-            tempRestoreFile.writeBytes(decryptedDbBytes)
-            
-            Log.d(tag, "[RESTORE] Decrypted size: ${decryptedDbBytes.size} bytes")
-            val header = if (decryptedDbBytes.size >= 16) decryptedDbBytes.take(16).toByteArray() else byteArrayOf()
-            
-            // Safe logging of header hex (standard SQLite signature is not sensitive)
-            val headerHex = header.joinToString("") { "%02x".format(it) }
-            Log.d(tag, "[RESTORE] Decrypted header hex: $headerHex")
-
-            if (!header.contentEquals(CryptoManager.SQLITE_HEADER)) {
-                val error = "Decrypted data is not a valid SQLite database"
-                _restoreState.value = RestoreState.Failed(error)
-                return@withContext Result.failure(Exception(error))
-            }
-
-            Log.i(tag, "[RESTORE] STAGE 7: Atomic-style File Swap & Verification")
+            Log.i(tag, "[RESTORE] STAGE 5: Payload Processing & Fail-Safe Rollback Capture")
             _restoreState.value = RestoreState.SwappingDatabase
-            
-            // 1. Close the database
-            Log.d(tag, "[RESTORE] Closing current database connection...")
-            database.close()
-            delay(1000) // Safety delay for connection cleanup
-            
-            val liveDbFile = context.getDatabasePath(dbName)
-            val journalFile = File(liveDbFile.path + "-journal")
-            val walFile = File(liveDbFile.path + "-wal")
-            val shmFile = File(liveDbFile.path + "-shm")
 
-            // 2. Create Rollback Point
-            if (liveDbFile.exists()) {
-                Log.d(tag, "[RESTORE] Creating rollback point...")
-                if (!liveDbFile.renameTo(rollbackFile)) {
-                    val error = "Failed to create rollback file. DB might be locked."
-                    _restoreState.value = RestoreState.Failed(error)
-                    return@withContext Result.failure(Exception(error))
-                }
-            }
-
-            // 3. Clean up auxiliary files
-            Log.d(tag, "[RESTORE] Cleaning old WAL/SHM files...")
-            if (walFile.exists()) walFile.delete()
-            if (shmFile.exists()) shmFile.delete()
-            if (journalFile.exists()) journalFile.delete()
-
-            // 4. Swap to new database
-            Log.d(tag, "[RESTORE] Moving restored file to live path...")
-            try {
-                tempRestoreFile.copyTo(liveDbFile, overwrite = true)
-                tempRestoreFile.delete()
+            // Capture pre-restore snapshot to enable rollback on validation failure
+            val preRestoreSnapshot = try {
+                createUserBackupPayload(firebaseUid)
             } catch (e: Exception) {
-                Log.e(tag, "[RESTORE] SWAP FAILED: ${e.message}. Attempting rollback.")
-                if (rollbackFile.exists()) rollbackFile.renameTo(liveDbFile)
-                val error = "File system error during swap: ${e.message}"
-                _restoreState.value = RestoreState.Failed(error)
-                return@withContext Result.failure(Exception(error))
+                Log.w(tag, "[RESTORE] Pre-restore snapshot skipped: ${e.message}")
+                null
             }
 
-            // 5. Verification - Lightweight
-            if (!liveDbFile.exists() || liveDbFile.length() < 100) {
-                Log.e(tag, "[RESTORE] VERIFICATION FAILED: Live DB invalid. Attempting rollback.")
-                if (rollbackFile.exists()) {
-                    liveDbFile.delete()
-                    rollbackFile.renameTo(liveDbFile)
+            try {
+                val header = if (decryptedBytes.size >= 16) decryptedBytes.take(16).toByteArray() else byteArrayOf()
+                if (header.contentEquals(CryptoManager.SQLITE_HEADER)) {
+                    Log.i(tag, "[RESTORE] Processing legacy full SQLite DB backup...")
+                    tempRestoreFile.writeBytes(decryptedBytes)
+                    restoreLegacySqliteDb(tempRestoreFile, firebaseUid)
+                } else {
+                    Log.i(tag, "[RESTORE] Processing UserBackupPayload JSON backup...")
+                    val payloadJson = String(decryptedBytes, Charsets.UTF_8)
+                    val payload = stableJson.decodeFromString<UserBackupPayload>(payloadJson)
+                    if (payload.firebaseUid != firebaseUid) {
+                        val error = "Backup payload user mismatch (${payload.firebaseUid})"
+                        _restoreState.value = RestoreState.Failed(error)
+                        return@withContext Result.failure(Exception(error))
+                    }
+                    restoreUserPayload(payload)
                 }
-                val error = "Restored database verification failed."
+
+                // Post-restore integrity and query validation
+                verifyDatabaseIntegrity()
+                verifyEssentialQueries(firebaseUid)
+                Log.i(tag, "[RESTORE] Post-restore integrity & query verification succeeded.")
+            } catch (e: Exception) {
+                Log.e(tag, "[RESTORE] Post-restore validation failed: ${e.message}. Triggering automatic rollback...", e)
+                if (preRestoreSnapshot != null) {
+                    try {
+                        restoreUserPayload(preRestoreSnapshot)
+                        Log.i(tag, "[RESTORE] Rollback to pre-restore snapshot completed successfully.")
+                    } catch (rollbackErr: Exception) {
+                        Log.e(tag, "[RESTORE] CRITICAL: Rollback failed: ${rollbackErr.message}", rollbackErr)
+                    }
+                }
+                val error = "Restore verification failed: ${e.message}. System rolled back to previous state."
                 _restoreState.value = RestoreState.Failed(error)
-                return@withContext Result.failure(Exception(error))
+                return@withContext Result.failure(Exception(error, e))
             }
 
-            // 6. Success - Finalize keys
             Log.d(tag, "[RESTORE] Finalizing backup keys...")
             val wrappedCloudKey = cryptoManager.wrapKey(cloudKey)
             val wrappedMasterKey = cryptoManager.wrapKey(masterKey.encoded)
             preferenceManager.saveBackupKeys(
+                firebaseUid,
                 Base64.encodeToString(wrappedCloudKey, Base64.NO_WRAP),
                 Base64.encodeToString(wrappedMasterKey, Base64.NO_WRAP)
             )
 
-            if (rollbackFile.exists()) rollbackFile.delete()
-            
             Log.i(tag, "[RESTORE] COMPLETED SUCCESSFULLY")
             _restoreState.value = RestoreState.Completed
             Result.success(Unit)
@@ -433,10 +426,6 @@ class BackupRepositoryImpl @Inject constructor(
             Result.failure(e)
         } catch (e: Exception) {
             Log.e(tag, "[RESTORE] FATAL ERROR: ${e.message}", e)
-            // Final safety rollback attempt
-            if (rollbackFile.exists() && !context.getDatabasePath(dbName).exists()) {
-                rollbackFile.renameTo(context.getDatabasePath(dbName))
-            }
             _restoreState.value = RestoreState.Failed(e.message ?: "Unknown fatal error")
             Result.failure(e)
         } finally {
@@ -447,6 +436,245 @@ class BackupRepositoryImpl @Inject constructor(
     override suspend fun clearLocalData(): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {
             database.clearAllTables()
+        }
+    }
+
+    override suspend fun deleteUserData(firebaseUid: String): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching {
+            database.withTransaction {
+                database.transactionDao().deleteTransactionsForUser(firebaseUid)
+                database.paymentModeDao().deletePaymentModesForUser(firebaseUid)
+                database.userSettingsDao().deleteUserSettingsForUser(firebaseUid)
+                database.categoryDao().deleteCategoriesForUser(firebaseUid)
+                database.profileDao().deleteProfile(firebaseUid)
+            }
+            preferenceManager.clearUserData(firebaseUid)
+            try {
+                WorkManager.getInstance(context).cancelUniqueWork("PeriodicBackup")
+                WorkManager.getInstance(context).cancelUniqueWork("OneTimeBackup")
+            } catch (e: Exception) {
+                Log.w(tag, "Failed to cancel work manager tasks during account deletion: ${e.message}")
+            }
+            Unit
+        }
+    }
+
+    override suspend fun deleteAllCloudBackups(userEmail: String): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching {
+            if (userEmail.isNotBlank()) {
+                driveDataSource.setupService(userEmail)
+                val files = driveDataSource.listBackupFiles()
+                files.forEach { file ->
+                    Log.d(tag, "Deleting cloud backup file: ${file.name} (${file.id})")
+                    driveDataSource.deleteFile(file.id)
+                }
+            }
+            Unit
+        }
+    }
+
+    private fun checkpointAndFlushWal() {
+        try {
+            val writableDb = database.openHelper.writableDatabase
+            val cursor = writableDb.query("PRAGMA wal_checkpoint(FULL)")
+            if (cursor.moveToFirst()) {
+                val busy = cursor.getInt(0)
+                val log = cursor.getInt(1)
+                val checkpointed = cursor.getInt(2)
+                Log.d(tag, "[SNAPSHOT] WAL checkpoint FULL result: busy=$busy, log=$log, checkpointed=$checkpointed")
+                if (busy != 0) {
+                    Log.w(tag, "[SNAPSHOT] WAL checkpoint reported busy, executing TRUNCATE checkpoint...")
+                    writableDb.query("PRAGMA wal_checkpoint(TRUNCATE)").close()
+                }
+            }
+            cursor.close()
+        } catch (e: Exception) {
+            Log.e(tag, "[SNAPSHOT] WAL checkpoint failed: ${e.message}", e)
+        }
+    }
+
+    private fun verifyDatabaseIntegrity() {
+        val cursor = database.openHelper.writableDatabase.query("PRAGMA quick_check")
+        var result = ""
+        if (cursor.moveToFirst()) {
+            result = cursor.getString(0)
+        }
+        cursor.close()
+        if (!result.equals("ok", ignoreCase = true)) {
+            throw IllegalStateException("SQLite quick_check failed with result: $result")
+        }
+    }
+
+    private suspend fun verifyEssentialQueries(firebaseUid: String) {
+        database.profileDao().getProfileByIdSync(firebaseUid)
+        database.userSettingsDao().getUserSettingsForUser(firebaseUid)
+        database.transactionDao().getAllTransactionsForUser(firebaseUid)
+        database.categoryDao().getAllCategoriesForUser(firebaseUid)
+        database.paymentModeDao().getAllPaymentModesForUser(firebaseUid)
+    }
+
+    private suspend fun createUserBackupPayload(firebaseUid: String): UserBackupPayload {
+        checkpointAndFlushWal()
+        return database.withTransaction {
+            val profile = database.profileDao().getProfileByIdSync(firebaseUid)
+            val transactions = database.transactionDao().getAllTransactionsForUser(firebaseUid)
+            val categories = database.categoryDao().getAllCategoriesForUser(firebaseUid)
+            val paymentModes = database.paymentModeDao().getAllPaymentModesForUser(firebaseUid)
+            val userSettings = database.userSettingsDao().getUserSettingsForUser(firebaseUid)
+
+            UserBackupPayload(
+                firebaseUid = firebaseUid,
+                profile = profile,
+                transactions = transactions,
+                categories = categories,
+                paymentModes = paymentModes,
+                userSettings = userSettings
+            )
+        }
+    }
+
+    private suspend fun restoreUserPayload(payload: UserBackupPayload) {
+        val uid = payload.firebaseUid
+        database.withTransaction {
+            database.transactionDao().deleteTransactionsForUser(uid)
+            database.paymentModeDao().deletePaymentModesForUser(uid)
+            database.userSettingsDao().deleteUserSettingsForUser(uid)
+            database.categoryDao().deleteCategoriesForUser(uid)
+            database.profileDao().deleteProfile(uid)
+
+            payload.profile?.let { database.profileDao().insertProfile(it) }
+            payload.userSettings?.let { database.userSettingsDao().insertUserSettings(it) }
+            if (payload.paymentModes.isNotEmpty()) {
+                database.paymentModeDao().insertPaymentModes(payload.paymentModes)
+            }
+            if (payload.categories.isNotEmpty()) {
+                database.categoryDao().insertCategories(payload.categories)
+            }
+            if (payload.transactions.isNotEmpty()) {
+                database.transactionDao().insertTransactions(payload.transactions)
+            }
+        }
+    }
+
+    private suspend fun restoreLegacySqliteDb(tempDbFile: File, firebaseUid: String) {
+        var sqliteDb: SQLiteDatabase? = null
+        try {
+            sqliteDb = SQLiteDatabase.openDatabase(tempDbFile.path, null, SQLiteDatabase.OPEN_READONLY)
+            
+            // Verify integrity of legacy SQLite file
+            sqliteDb.rawQuery("PRAGMA quick_check", null).use { cursor ->
+                var checkResult = ""
+                if (cursor.moveToFirst()) {
+                    checkResult = cursor.getString(0)
+                }
+                if (!checkResult.equals("ok", ignoreCase = true)) {
+                    throw IllegalStateException("Legacy backup SQLite file failed integrity check: $checkResult")
+                }
+            }
+
+            val profiles = mutableListOf<ProfileEntity>()
+            sqliteDb.rawQuery("SELECT id, full_name, email, phone, created_at, updated_at FROM profiles WHERE id = ?", arrayOf(firebaseUid)).use { cursor ->
+                while (cursor.moveToNext()) {
+                    profiles.add(ProfileEntity(
+                        id = cursor.getString(0),
+                        fullName = cursor.getString(1),
+                        email = cursor.getString(2),
+                        phone = if (cursor.isNull(3)) null else cursor.getString(3),
+                        createdAt = if (cursor.isNull(4)) null else cursor.getString(4),
+                        updatedAt = cursor.getString(5)
+                    ))
+                }
+            }
+
+            var userSettings: UserSettingsEntity? = null
+            sqliteDb.rawQuery("SELECT user_id, currency, theme, language, date_format, financial_year, start_of_week, updated_at FROM user_settings WHERE user_id = ?", arrayOf(firebaseUid)).use { cursor ->
+                if (cursor.moveToNext()) {
+                    userSettings = UserSettingsEntity(
+                        userId = cursor.getString(0),
+                        currency = cursor.getString(1),
+                        theme = cursor.getString(2),
+                        language = cursor.getString(3),
+                        dateFormat = cursor.getString(4),
+                        financialYear = cursor.getString(5),
+                        startOfWeek = cursor.getString(6),
+                        updatedAt = cursor.getString(7)
+                    )
+                }
+            }
+
+            val paymentModes = mutableListOf<PaymentModeEntity>()
+            sqliteDb.rawQuery("SELECT id, user_id, name, display_order, is_system, is_active, created_at, updated_at FROM payment_modes WHERE user_id = ?", arrayOf(firebaseUid)).use { cursor ->
+                while (cursor.moveToNext()) {
+                    paymentModes.add(PaymentModeEntity(
+                        id = cursor.getString(0),
+                        userId = cursor.getString(1),
+                        name = cursor.getString(2),
+                        displayOrder = cursor.getInt(3),
+                        isSystem = cursor.getInt(4) == 1,
+                        isActive = cursor.getInt(5) == 1,
+                        createdAt = cursor.getString(6),
+                        updatedAt = cursor.getString(7)
+                    ))
+                }
+            }
+
+            val categories = mutableListOf<CategoryEntity>()
+            sqliteDb.rawQuery("SELECT id, profile_id, parent_id, type, level, name, display_order, is_system, is_active, created_at, updated_at FROM categories WHERE profile_id IS NULL OR profile_id = ?", arrayOf(firebaseUid)).use { cursor ->
+                while (cursor.moveToNext()) {
+                    categories.add(CategoryEntity(
+                        id = cursor.getString(0),
+                        profileId = if (cursor.isNull(1)) null else cursor.getString(1),
+                        parentId = if (cursor.isNull(2)) null else cursor.getString(2),
+                        type = cursor.getString(3),
+                        level = cursor.getInt(4),
+                        name = cursor.getString(5),
+                        displayOrder = cursor.getInt(6),
+                        isSystem = cursor.getInt(7) == 1,
+                        isActive = cursor.getInt(8) == 1,
+                        createdAt = cursor.getString(9),
+                        updatedAt = cursor.getString(10)
+                    ))
+                }
+            }
+
+            val transactions = mutableListOf<TransactionEntity>()
+            sqliteDb.rawQuery("SELECT id, user_id, amount, type, category_level1_id, category_level2_id, category_level3_id, payment_mode_id, note, transaction_date, created_at, updated_at, is_deleted FROM transactions WHERE user_id = ?", arrayOf(firebaseUid)).use { cursor ->
+                while (cursor.moveToNext()) {
+                    val rawAmountType = cursor.getType(2)
+                    val amountInPaise = if (rawAmountType == android.database.Cursor.FIELD_TYPE_FLOAT) {
+                        Math.round(cursor.getDouble(2) * 100.0)
+                    } else {
+                        cursor.getLong(2)
+                    }
+                    transactions.add(TransactionEntity(
+                        id = cursor.getString(0),
+                        userId = cursor.getString(1),
+                        amount = amountInPaise,
+                        type = cursor.getString(3),
+                        categoryLevel1Id = cursor.getString(4),
+                        categoryLevel2Id = cursor.getString(5),
+                        categoryLevel3Id = if (cursor.isNull(6)) null else cursor.getString(6),
+                        paymentModeId = if (cursor.isNull(7)) null else cursor.getString(7),
+                        note = if (cursor.isNull(8)) null else cursor.getString(8),
+                        transactionDate = cursor.getString(9),
+                        createdAt = cursor.getString(10),
+                        updatedAt = cursor.getString(11),
+                        isDeleted = cursor.getInt(12) == 1
+                    ))
+                }
+            }
+
+            val payload = UserBackupPayload(
+                firebaseUid = firebaseUid,
+                profile = profiles.firstOrNull(),
+                transactions = transactions,
+                categories = categories.filter { !it.isSystem },
+                paymentModes = paymentModes,
+                userSettings = userSettings
+            )
+            restoreUserPayload(payload)
+        } finally {
+            sqliteDb?.close()
         }
     }
 
@@ -464,11 +692,9 @@ class BackupRepositoryImpl @Inject constructor(
     }
 
     private fun generateStableMetadataMac(metadata: BackupMetadata, key: ByteArray): String {
-        // Convert to JsonObject, remove MAC field, and sort keys for stability
         val jsonObject = stableJson.encodeToJsonElement(metadata).jsonObject
         val filteredMap = jsonObject.toMutableMap().apply { remove("metadataMac") }
         
-        // Sort keys alphabetically to create a canonical string representation
         val sortedJson = buildJsonObject {
             filteredMap.keys.sorted().forEach { key ->
                 put(key, filteredMap[key]!!)

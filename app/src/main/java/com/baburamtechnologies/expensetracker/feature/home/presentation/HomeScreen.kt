@@ -24,6 +24,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.baburamtechnologies.expensetracker.core.designsystem.theme.*
+import com.baburamtechnologies.expensetracker.core.util.toFormattedCurrency
 import com.baburamtechnologies.expensetracker.feature.transactions.domain.model.CategorySummary
 import com.baburamtechnologies.expensetracker.feature.transactions.ui.components.DateRangeHeader
 import com.baburamtechnologies.expensetracker.feature.transactions.ui.resolveCategoryName
@@ -113,7 +114,7 @@ fun HomeScreen(
                                     }
                                 }
                                 TotalExpenseCard(
-                                    amount = "₹${uiState.summary.totalExpense}",
+                                    amount = uiState.summary.totalExpense.toFormattedCurrency(),
                                     period = periodText
                                 )
                             }
@@ -126,14 +127,14 @@ fun HomeScreen(
                                     SummaryStatCard(
                                         modifier = Modifier.weight(1f),
                                         title = "Income",
-                                        amount = "₹${uiState.summary.totalIncome}",
+                                        amount = uiState.summary.totalIncome.toFormattedCurrency(),
                                         icon = Icons.Default.AccountBalanceWallet,
                                         iconBg = Color(0xFF16A34A)
                                     )
                                     SummaryStatCard(
                                         modifier = Modifier.weight(1f),
                                         title = "Balance",
-                                        amount = "₹${uiState.summary.totalBalance}",
+                                        amount = uiState.summary.totalBalance.toFormattedCurrency(),
                                         icon = Icons.Default.AccountBalance,
                                         iconBg = Color(0xFF6366F1)
                                     )
@@ -358,7 +359,7 @@ private fun CategoryBreakdownCard(
             } else {
                 val totalExpense = categories.sumOf { it.totalAmount }
                 categories.take(3).forEach { category ->
-                    val progress = if (totalExpense > 0) (category.totalAmount / totalExpense).toFloat() else 0f
+                    val progress = if (totalExpense > 0L) (category.totalAmount.toFloat() / totalExpense.toFloat()) else 0f
                     val percentage = "%.1f%%".format(progress * 100)
                     
                     val icon = Icons.Default.GridView
@@ -367,7 +368,7 @@ private fun CategoryBreakdownCard(
 
                     CategoryProgressRow(
                         name = category.categoryName.resolveCategoryName(),
-                        amount = "₹${category.totalAmount}",
+                        amount = category.totalAmount.toFormattedCurrency(),
                         percent = percentage,
                         progress = progress,
                         progressColor = color,

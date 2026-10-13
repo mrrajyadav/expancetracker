@@ -5,7 +5,9 @@ import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.PrimaryKey
 import com.baburamtechnologies.expensetracker.core.database.model.ProfileEntity
+import kotlinx.serialization.Serializable
 
+@Serializable
 @Entity(
     tableName = "user_settings",
     foreignKeys = [
