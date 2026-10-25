@@ -10,6 +10,7 @@ import com.baburamtechnologies.expensetracker.core.backup.domain.BackupRepositor
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 
 @HiltWorker
@@ -17,7 +18,8 @@ class BackupWorker @AssistedInject constructor(
     @Assisted appContext: Context,
     @Assisted workerParams: WorkerParameters,
     private val backupRepository: BackupRepository,
-    private val currentUserProvider: CurrentUserProvider
+    private val currentUserProvider: CurrentUserProvider,
+    private val preferenceManager: com.baburamtechnologies.expensetracker.core.datastore.PreferenceManager
 ) : CoroutineWorker(appContext, workerParams) {
 
     private val tag = "BackupWorker"
@@ -30,6 +32,12 @@ class BackupWorker @AssistedInject constructor(
         val uid = currentUserProvider.userId() ?: run {
             Log.w(tag, "Backup skipped: No authenticated UID")
             return@withContext Result.failure()
+        }
+        
+        val isAutoBackupEnabled = preferenceManager.autoBackupEnabled(uid).first()
+        if (!isAutoBackupEnabled && this@BackupWorker.tags.contains("PeriodicBackup")) {
+            Log.i(tag, "Backup skipped: Auto-backup is disabled for this user")
+            return@withContext Result.success()
         }
 
         Log.i(tag, "Starting automated backup for user: $userEmail")

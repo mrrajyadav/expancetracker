@@ -40,7 +40,6 @@ class PaymentModeRepositoryImpl @Inject constructor(
                 if (userId != null) {
                     localDataSource.getActivePaymentModes(userId)
                         .map { entities -> entities.map { it.toDomain() } }
-                        .onEach { if (it.isEmpty()) seedDefaultPaymentModes() }
                 } else {
                     flowOf(emptyList())
                 }

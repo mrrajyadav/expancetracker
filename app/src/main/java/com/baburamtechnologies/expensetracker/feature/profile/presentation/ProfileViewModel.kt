@@ -173,7 +173,7 @@ class ProfileViewModel @Inject constructor(
             }
 
             try {
-                // 1. Delete cloud backups in Google Drive
+                // 1. Delete cloud backups in Google Drive (idempotent, safe to retry)
                 val cloudResult = backupRepository.deleteAllCloudBackups(email)
                 if (cloudResult.isFailure) {
                     _effect.emit(ProfileEffect.ShowMessage("Failed to delete cloud backups: ${cloudResult.exceptionOrNull()?.message}"))
@@ -181,22 +181,23 @@ class ProfileViewModel @Inject constructor(
                     return@launch
                 }
 
-                // 2. Delete local user financial records & encryption keys
-                val localResult = backupRepository.deleteUserData(userId)
-                if (localResult.isFailure) {
-                    _effect.emit(ProfileEffect.ShowMessage("Failed to delete local data: ${localResult.exceptionOrNull()?.message}"))
+                // 2. Delete Firebase Auth account (can fail due to recent login required)
+                val authResult = authRepository.deleteAccount()
+                if (authResult.isFailure) {
+                    val errorMsg = authResult.exceptionOrNull()?.message ?: "Unknown auth error"
+                    _effect.emit(ProfileEffect.ShowMessage("Account deletion failed. Please re-login and try again. ($errorMsg)"))
                     _uiState.update { it.copy(isLoading = false) }
                     return@launch
                 }
 
-                // 3. Delete Firebase Auth account
-                authRepository.deleteAccount().onSuccess {
-                    authRepository.signOut()
-                    _effect.emit(ProfileEffect.ShowMessage("Account and all associated local & cloud data deleted successfully"))
-                    _effect.emit(ProfileEffect.RestartApp)
-                }.onFailure { error ->
-                    _effect.emit(ProfileEffect.ShowMessage("Deletion failed: ${error.message}"))
-                }
+                // 3. Delete local user financial records & encryption keys
+                // Only executed if Auth deletion was successful
+                backupRepository.deleteUserData(userId)
+                
+                authRepository.signOut()
+                _effect.emit(ProfileEffect.ShowMessage("Account and all associated local & cloud data deleted successfully"))
+                _effect.emit(ProfileEffect.RestartApp)
+                
             } catch (e: Exception) {
                 _effect.emit(ProfileEffect.ShowMessage("Account deletion cleanup failed: ${e.message}"))
             } finally {

@@ -31,7 +31,6 @@ class PaymentModeLocalDataSourceImpl @Inject constructor(
         userId = paymentMode.userId,
         name = paymentMode.name,
         displayOrder = paymentMode.displayOrder,
-        isSystem = paymentMode.isSystem,
         isActive = paymentMode.isActive,
         updatedAt = paymentMode.updatedAt
     )

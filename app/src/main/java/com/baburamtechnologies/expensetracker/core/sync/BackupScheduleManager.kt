@@ -57,5 +57,6 @@ class BackupScheduleManager @Inject constructor(
 
     fun cancelPeriodicBackup() {
         workManager.cancelUniqueWork("PeriodicBackup")
+        workManager.cancelUniqueWork("OneTimeBackup")
     }
 }

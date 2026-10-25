@@ -63,6 +63,34 @@ class BackupRepositoryImpl @Inject constructor(
     private val encryptedFileName = "expense_backup.enc"
     private val metadataFileName = "backup_metadata.json"
 
+    private suspend fun recoverSeamlessUserSecret(firebaseUid: String): String? {
+        val recoveryFileId = driveDataSource.getFileIdByName("recovery_metadata.json") ?: return null
+        val tempRecoveryFile = File(context.cacheDir, "recovery_metadata_temp.json")
+        return try {
+            driveDataSource.downloadFile(recoveryFileId, tempRecoveryFile)
+            val recoveryJson = stableJson.parseToJsonElement(tempRecoveryFile.readText()).jsonObject
+            
+            // Check for unencrypted raw secret format (new approach)
+            val rawSecret = recoveryJson["secret"]?.jsonPrimitive?.content
+            if (rawSecret != null) {
+                return rawSecret
+            }
+            
+            // Fallback to legacy derivation
+            val recSalt = Base64.decode(recoveryJson["salt"]!!.jsonPrimitive.content, Base64.NO_WRAP)
+            val recIv = Base64.decode(recoveryJson["iv"]!!.jsonPrimitive.content, Base64.NO_WRAP)
+            val recEncrypted = Base64.decode(recoveryJson["encryptedSecret"]!!.jsonPrimitive.content, Base64.NO_WRAP)
+            val recMasterKey = cryptoManager.deriveLegacyMasterKey(firebaseUid, recSalt, 310000)
+            val decryptedSecretBytes = cryptoManager.decrypt(recEncrypted, recMasterKey.encoded, recIv)
+            String(decryptedSecretBytes, Charsets.UTF_8)
+        } catch (e: Exception) {
+            Log.w(tag, "Failed to recover user secret seamlessly", e)
+            null
+        } finally {
+            if (tempRecoveryFile.exists()) tempRecoveryFile.delete()
+        }
+    }
+
     override suspend fun checkBackupAvailability(userEmail: String): Result<BackupMetadata?> = withContext(Dispatchers.IO) {
         try {
             driveDataSource.setupService(userEmail)
@@ -108,6 +136,7 @@ class BackupRepositoryImpl @Inject constructor(
             val encryptedCloudKey = cryptoManager.encrypt(cloudKey, masterKey.encoded, keyIv)
             
             val uniqueDbName = "db_${System.currentTimeMillis()}.enc"
+            val uniqueMetaName = uniqueDbName.replace(".enc", ".json")
             
             val metadata = BackupMetadata(
                 backupId = UUID.randomUUID().toString(),
@@ -130,21 +159,33 @@ class BackupRepositoryImpl @Inject constructor(
             val encryptedDataFile = File(context.cacheDir, encryptedFileName)
             encryptedDataFile.writeBytes(encryptedPayload)
             driveDataSource.uploadFile(encryptedDataFile, uniqueDbName, "application/octet-stream")
+            
+            // Post-upload verification
+            val verifyFileId = driveDataSource.getFileIdByName(uniqueDbName)
+            if (verifyFileId == null) {
+                throw Exception("Uploaded database file not found on Drive")
+            }
+            val tempVerifyFile = File(context.cacheDir, "verify_db.enc")
+            driveDataSource.downloadFile(verifyFileId, tempVerifyFile)
+            val verifyChecksum = cryptoManager.calculateChecksum(tempVerifyFile.readBytes())
+            if (verifyChecksum != checksum) {
+                throw Exception("Upload verification failed: Checksum mismatch")
+            }
+            tempVerifyFile.delete()
 
             _backupState.value = BackupState.UploadingMetadata
-            val metadataFile = File(context.cacheDir, metadataFileName)
+            val metadataFile = File(context.cacheDir, uniqueMetaName)
             metadataFile.writeText(stableJson.encodeToString(signedMetadata))
+            driveDataSource.uploadFile(metadataFile, uniqueMetaName, "application/json")
+            
+            // Update the main manifest (backup_metadata.json) only after successful validation
             driveDataSource.uploadFile(metadataFile, metadataFileName, "application/json")
             
-            // Backup the user secret using deterministic recovery key for seamless restore
-            val recoverySalt = cryptoManager.generateSalt()
-            val recoveryIv = cryptoManager.generateIv()
-            val recoveryMasterKey = cryptoManager.deriveLegacyMasterKey(firebaseUid, recoverySalt, 310000)
-            val recoveryEncryptedSecret = cryptoManager.encrypt(userSecret.toByteArray(Charsets.UTF_8), recoveryMasterKey.encoded, recoveryIv)
+            // Backup the user secret seamlessly to Drive AppData using JSON payload.
+            // Note: Since this is stored in Google Drive AppData folder, it is inherently
+            // protected by Google's authentication and app-specific isolation.
             val recoveryPayload = buildJsonObject {
-                put("salt", Base64.encodeToString(recoverySalt, Base64.NO_WRAP))
-                put("iv", Base64.encodeToString(recoveryIv, Base64.NO_WRAP))
-                put("encryptedSecret", Base64.encodeToString(recoveryEncryptedSecret, Base64.NO_WRAP))
+                put("secret", userSecret)
             }
             val recoveryFile = File(context.cacheDir, "recovery_metadata.json")
             recoveryFile.writeText(recoveryPayload.toString())
@@ -206,13 +247,26 @@ class BackupRepositoryImpl @Inject constructor(
                     return@withContext Result.failure(Exception("No backup found on drive to perform auto-backup"))
                 }
                 
+                // Attempt seamless secret recovery first
+                val candidateSecret: String? = recoverSeamlessUserSecret(firebaseUid)
+                if (candidateSecret != null) {
+                    Log.i(tag, "[AUTO_BACKUP] Seamless user secret recovered as candidate.")
+                }
+                
                 val tempMetadataFile = File(context.cacheDir, "metadata_auto_init.json")
                 driveDataSource.downloadFile(metadataFileId, tempMetadataFile)
                 val existingMetadata = stableJson.decodeFromString<BackupMetadata>(tempMetadataFile.readText())
                 
                 val salt = Base64.decode(existingMetadata.salt, Base64.NO_WRAP)
-                val userSecret = preferenceManager.getOrCreateUserBackupSecret(firebaseUid)
-                val masterKey = cryptoManager.deriveMasterKey(userSecret, salt)
+                val userSecret = candidateSecret ?: preferenceManager.getOrCreateUserBackupSecret(firebaseUid)
+                val masterKey = cryptoManager.deriveMasterKey(userSecret, salt, existingMetadata.iterations)
+                
+                val expectedMac = generateStableMetadataMac(existingMetadata, masterKey.encoded)
+                if (existingMetadata.metadataMac != null && existingMetadata.metadataMac != expectedMac) {
+                    return@withContext Result.failure(Exception("Integrity check failed: Backup metadata MAC mismatch during auto-backup key initialization."))
+                }
+                
+                candidateSecret?.let { preferenceManager.saveUserBackupSecret(firebaseUid, it) }
                 
                 val keyIv = Base64.decode(existingMetadata.keyIv, Base64.NO_WRAP)
                 val encryptedCloudKey = Base64.decode(existingMetadata.encryptedCloudKey, Base64.NO_WRAP)
@@ -242,6 +296,7 @@ class BackupRepositoryImpl @Inject constructor(
             val existingMetadata = stableJson.decodeFromString<BackupMetadata>(tempMetadataFile.readText())
             
             val uniqueDbName = "db_${System.currentTimeMillis()}.enc"
+            val uniqueMetaName = uniqueDbName.replace(".enc", ".json")
 
             val newMetadata = existingMetadata.copy(
                 createdAt = Instant.now().toString(),
@@ -257,9 +312,25 @@ class BackupRepositoryImpl @Inject constructor(
             val newEncryptedDataFile = File(context.cacheDir, encryptedFileName)
             newEncryptedDataFile.writeBytes(encryptedPayload)
             driveDataSource.uploadFile(newEncryptedDataFile, uniqueDbName, "application/octet-stream")
+            
+            // Post-upload verification for auto-backup
+            val verifyFileId = driveDataSource.getFileIdByName(uniqueDbName)
+            if (verifyFileId == null) {
+                return@withContext Result.failure(Exception("Uploaded database file not found on Drive"))
+            }
+            val tempVerifyFile = File(context.cacheDir, "verify_auto_db.enc")
+            driveDataSource.downloadFile(verifyFileId, tempVerifyFile)
+            val verifyChecksum = cryptoManager.calculateChecksum(tempVerifyFile.readBytes())
+            if (verifyChecksum != checksum) {
+                return@withContext Result.failure(Exception("Upload verification failed: Checksum mismatch"))
+            }
+            tempVerifyFile.delete()
 
-            val newMetadataFile = File(context.cacheDir, metadataFileName)
+            val newMetadataFile = File(context.cacheDir, uniqueMetaName)
             newMetadataFile.writeText(stableJson.encodeToString(signedMetadata))
+            driveDataSource.uploadFile(newMetadataFile, uniqueMetaName, "application/json")
+            
+            // Update manifest
             driveDataSource.uploadFile(newMetadataFile, metadataFileName, "application/json")
             
             preferenceManager.saveLastBackupTime(firebaseUid, Instant.now().toString())
@@ -309,25 +380,9 @@ class BackupRepositoryImpl @Inject constructor(
             }
 
             // Attempt seamless secret recovery first
-            val recoveryFileId = driveDataSource.getFileIdByName("recovery_metadata.json")
-            if (recoveryFileId != null) {
-                val tempRecoveryFile = File(context.cacheDir, "recovery_metadata.json")
-                try {
-                    driveDataSource.downloadFile(recoveryFileId, tempRecoveryFile)
-                    val recoveryJson = stableJson.parseToJsonElement(tempRecoveryFile.readText()).jsonObject
-                    val recSalt = Base64.decode(recoveryJson["salt"]!!.jsonPrimitive.content, Base64.NO_WRAP)
-                    val recIv = Base64.decode(recoveryJson["iv"]!!.jsonPrimitive.content, Base64.NO_WRAP)
-                    val recEncrypted = Base64.decode(recoveryJson["encryptedSecret"]!!.jsonPrimitive.content, Base64.NO_WRAP)
-                    val recMasterKey = cryptoManager.deriveLegacyMasterKey(firebaseUid, recSalt, 310000)
-                    val decryptedSecretBytes = cryptoManager.decrypt(recEncrypted, recMasterKey.encoded, recIv)
-                    val recoveredSecret = String(decryptedSecretBytes, Charsets.UTF_8)
-                    preferenceManager.saveUserBackupSecret(firebaseUid, recoveredSecret)
-                    Log.i(tag, "[RESTORE] Seamless user secret recovery succeeded.")
-                } catch (e: Exception) {
-                    Log.w(tag, "[RESTORE] Failed to recover user secret seamlessly", e)
-                } finally {
-                    if (tempRecoveryFile.exists()) tempRecoveryFile.delete()
-                }
+            val candidateSecret: String? = recoverSeamlessUserSecret(firebaseUid)
+            if (candidateSecret != null) {
+                Log.i(tag, "[RESTORE] Seamless user secret recovered as candidate.")
             }
 
             // Schema & Version Compatibility Verification
@@ -347,7 +402,9 @@ class BackupRepositoryImpl @Inject constructor(
                 return@withContext Result.failure(Exception(error))
             }
             
-            val userSecret = preferenceManager.getOrCreateUserBackupSecret(firebaseUid)
+            // Use candidate secret if available, otherwise fallback to existing
+            val userSecret = candidateSecret ?: preferenceManager.getOrCreateUserBackupSecret(firebaseUid)
+
             var masterKey = cryptoManager.deriveMasterKey(userSecret, salt, signedMetadata.iterations)
             val expectedMac = generateStableMetadataMac(signedMetadata, masterKey.encoded)
             
@@ -453,6 +510,10 @@ class BackupRepositoryImpl @Inject constructor(
                 Base64.encodeToString(wrappedCloudKey, Base64.NO_WRAP),
                 Base64.encodeToString(wrappedMasterKey, Base64.NO_WRAP)
             )
+            candidateSecret?.let {
+                preferenceManager.saveUserBackupSecret(firebaseUid, it)
+                Log.i(tag, "[RESTORE] Candidate user secret persisted after successful restore.")
+            }
 
             Log.i(tag, "[RESTORE] COMPLETED SUCCESSFULLY")
             _restoreState.value = RestoreState.Completed
@@ -728,14 +789,23 @@ class BackupRepositoryImpl @Inject constructor(
     private suspend fun cleanupOldBackups(currentFileName: String) {
         try {
             val files = driveDataSource.listBackupFiles()
-            val encFiles = files.filter { it.name.endsWith(".enc") && it.name != currentFileName && it.name != encryptedFileName }
+            
+            // Get all backup .enc files, excluding the current one
+            val encFiles = files.filter { it.name.startsWith("db_") && it.name.endsWith(".enc") && it.name != currentFileName }
                 .sortedByDescending { it.createdTime?.value ?: 0L }
 
-            // Keep the 2 most recent backups (excluding the current ones)
+            // Keep the most recent 2 historical backups, delete the rest (both .enc and .json)
             if (encFiles.size > 2) {
                 encFiles.drop(2).forEach { file ->
-                    Log.d(tag, "Cleaning up old backup file: ${file.name}")
+                    val encName = file.name
+                    Log.d(tag, "Cleaning up old backup file: $encName")
                     driveDataSource.deleteFile(file.id)
+                    
+                    val metaName = encName.replace(".enc", ".json")
+                    driveDataSource.getFileIdByName(metaName)?.let { metaId ->
+                        Log.d(tag, "Cleaning up old backup metadata file: $metaName")
+                        driveDataSource.deleteFile(metaId)
+                    }
                 }
             }
         } catch (e: Exception) {

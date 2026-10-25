@@ -62,10 +62,6 @@ class AddTransactionViewModel @Inject constructor(
                         isEditMode = true,
                         originalCreatedAt = t.createdAt
                     ) }
-                    
-                    // Trigger loading sub-categories without resetting selections
-                    loadLevel2Categories(item.categoryLevel1.id)
-                    item.categoryLevel2.let { loadLevel3Categories(it.id) }
                 }
             }
         }
@@ -86,6 +82,28 @@ class AddTransactionViewModel @Inject constructor(
             .flatMapLatest { type -> getCategoriesByTypeAndLevelUseCase(type, 1) }
             .onEach { categories -> 
                 _uiState.update { it.copy(level1Categories = categories) }
+                validateForm()
+            }
+            .launchIn(viewModelScope)
+
+        _uiState.map { it.selectedLevel1Category?.id }.distinctUntilChanged()
+            .flatMapLatest { parentId ->
+                if (parentId == null) flowOf(emptyList())
+                else getCategoriesByParentUseCase(parentId)
+            }
+            .onEach { categories ->
+                _uiState.update { it.copy(level2Categories = categories) }
+                validateForm()
+            }
+            .launchIn(viewModelScope)
+
+        _uiState.map { it.selectedLevel2Category?.id }.distinctUntilChanged()
+            .flatMapLatest { parentId ->
+                if (parentId == null) flowOf(emptyList())
+                else getCategoriesByParentUseCase(parentId)
+            }
+            .onEach { categories ->
+                _uiState.update { it.copy(level3Categories = categories) }
                 validateForm()
             }
             .launchIn(viewModelScope)
@@ -129,18 +147,6 @@ class AddTransactionViewModel @Inject constructor(
             level3Categories = emptyList(),
             fieldErrors = it.fieldErrors.toMutableMap().apply { remove(AddTransactionUiState.FIELD_CATEGORY_L1) }
         ) }
-        loadLevel2Categories(category.id)
-    }
-
-    private var level2Job: kotlinx.coroutines.Job? = null
-    private fun loadLevel2Categories(parentId: String) {
-        level2Job?.cancel()
-        level2Job = viewModelScope.launch {
-            getCategoriesByParentUseCase(parentId).collectLatest { categories ->
-                _uiState.update { it.copy(level2Categories = categories) }
-                validateForm()
-            }
-        }
     }
 
     fun onLevel2CategoryChange(category: Category) {
@@ -150,18 +156,6 @@ class AddTransactionViewModel @Inject constructor(
             level3Categories = emptyList(),
             fieldErrors = it.fieldErrors.toMutableMap().apply { remove(AddTransactionUiState.FIELD_CATEGORY_L2) }
         ) }
-        loadLevel3Categories(category.id)
-    }
-
-    private var level3Job: kotlinx.coroutines.Job? = null
-    private fun loadLevel3Categories(parentId: String) {
-        level3Job?.cancel()
-        level3Job = viewModelScope.launch {
-            getCategoriesByParentUseCase(parentId).collectLatest { categories ->
-                _uiState.update { it.copy(level3Categories = categories) }
-                validateForm()
-            }
-        }
     }
 
     fun onLevel3CategoryChange(category: Category) {

@@ -18,16 +18,15 @@ interface PaymentModeDao {
     @Query("DELETE FROM payment_modes WHERE id = :id AND user_id = :userId AND is_system = 0")
     suspend fun deletePaymentModeById(id: String, userId: String)
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertPaymentModes(paymentModes: List<PaymentModeEntity>)
 
-    @Query("UPDATE payment_modes SET name = :name, display_order = :displayOrder, is_system = :isSystem, is_active = :isActive, updated_at = :updatedAt WHERE id = :id AND user_id = :userId")
+    @Query("UPDATE payment_modes SET name = :name, display_order = :displayOrder, is_active = :isActive, updated_at = :updatedAt WHERE id = :id AND user_id = :userId AND is_system = 0")
     suspend fun updatePaymentMode(
         id: String,
         userId: String,
         name: String,
         displayOrder: Int,
-        isSystem: Boolean,
         isActive: Boolean,
         updatedAt: String
     )
