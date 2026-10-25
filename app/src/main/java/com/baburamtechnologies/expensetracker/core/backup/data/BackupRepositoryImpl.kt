@@ -43,7 +43,8 @@ class BackupRepositoryImpl @Inject constructor(
     private val database: ExpenseTrackerDatabase,
     private val driveDataSource: GoogleDriveDataSource,
     private val cryptoManager: CryptoManager,
-    private val preferenceManager: PreferenceManager
+    private val preferenceManager: PreferenceManager,
+    private val backupScheduleManager: com.baburamtechnologies.expensetracker.core.sync.BackupScheduleManager
 ) : BackupRepository {
 
     private val tag = "BackupRepo"
@@ -419,14 +420,36 @@ class BackupRepositoryImpl @Inject constructor(
 
             Log.i(tag, "[RESTORE] COMPLETED SUCCESSFULLY")
             _restoreState.value = RestoreState.Completed
+            
+            // Restore auto-backup scheduling if it was enabled
+            val isAutoBackupEnabled = preferenceManager.autoBackupEnabled(firebaseUid).first()
+            if (isAutoBackupEnabled) {
+                backupScheduleManager.schedulePeriodicBackup()
+                Log.d(tag, "[RESTORE] Periodic backup schedule restored")
+            }
+
             Result.success(Unit)
         } catch (e: UserRecoverableAuthIOException) {
             Log.e(tag, "[RESTORE] AUTH REQUIRED", e)
             _restoreState.value = RestoreState.AuthorizationRequired(e.intent)
+            
+            // Restore auto-backup scheduling if it was enabled
+            val isAutoBackupEnabled = preferenceManager.autoBackupEnabled(firebaseUid).first()
+            if (isAutoBackupEnabled) {
+                backupScheduleManager.schedulePeriodicBackup()
+            }
+
             Result.failure(e)
         } catch (e: Exception) {
             Log.e(tag, "[RESTORE] FATAL ERROR: ${e.message}", e)
             _restoreState.value = RestoreState.Failed(e.message ?: "Unknown fatal error")
+            
+            // Restore auto-backup scheduling if it was enabled
+            val isAutoBackupEnabled = preferenceManager.autoBackupEnabled(firebaseUid).first()
+            if (isAutoBackupEnabled) {
+                backupScheduleManager.schedulePeriodicBackup()
+            }
+
             Result.failure(e)
         } finally {
             if (tempRestoreFile.exists()) tempRestoreFile.delete()
@@ -681,11 +704,16 @@ class BackupRepositoryImpl @Inject constructor(
     private suspend fun cleanupOldBackups(currentFileName: String) {
         try {
             val files = driveDataSource.listBackupFiles()
-            files.filter { it.name.endsWith(".enc") && it.name != currentFileName && it.name != encryptedFileName }
-                .forEach { file ->
+            val encFiles = files.filter { it.name.endsWith(".enc") && it.name != currentFileName && it.name != encryptedFileName }
+                .sortedByDescending { it.createdTime?.value ?: 0L }
+
+            // Keep the 2 most recent backups (excluding the current ones)
+            if (encFiles.size > 2) {
+                encFiles.drop(2).forEach { file ->
                     Log.d(tag, "Cleaning up old backup file: ${file.name}")
                     driveDataSource.deleteFile(file.id)
                 }
+            }
         } catch (e: Exception) {
             Log.w(tag, "Failed to cleanup old backups: ${e.message}")
         }

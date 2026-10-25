@@ -132,8 +132,10 @@ class AddTransactionViewModel @Inject constructor(
         loadLevel2Categories(category.id)
     }
 
+    private var level2Job: kotlinx.coroutines.Job? = null
     private fun loadLevel2Categories(parentId: String) {
-        viewModelScope.launch {
+        level2Job?.cancel()
+        level2Job = viewModelScope.launch {
             getCategoriesByParentUseCase(parentId).collectLatest { categories ->
                 _uiState.update { it.copy(level2Categories = categories) }
                 validateForm()
@@ -151,8 +153,10 @@ class AddTransactionViewModel @Inject constructor(
         loadLevel3Categories(category.id)
     }
 
+    private var level3Job: kotlinx.coroutines.Job? = null
     private fun loadLevel3Categories(parentId: String) {
-        viewModelScope.launch {
+        level3Job?.cancel()
+        level3Job = viewModelScope.launch {
             getCategoriesByParentUseCase(parentId).collectLatest { categories ->
                 _uiState.update { it.copy(level3Categories = categories) }
                 validateForm()

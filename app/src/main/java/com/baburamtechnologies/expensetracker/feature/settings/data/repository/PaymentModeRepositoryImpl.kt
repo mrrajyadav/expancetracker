@@ -67,6 +67,8 @@ class PaymentModeRepositoryImpl @Inject constructor(
 
     override suspend fun updatePaymentMode(paymentMode: PaymentMode): Result<Unit> {
         return runCatching {
+            val userId = sessionManager.getCurrentUserId() ?: throw IllegalStateException("Not logged in")
+            if (paymentMode.userId != userId) throw IllegalStateException("Unauthorized")
             val now = Instant.now().toString()
             localDataSource.updatePaymentMode(paymentMode.toEntity().copy(
                 updatedAt = now
@@ -76,26 +78,29 @@ class PaymentModeRepositoryImpl @Inject constructor(
 
     override suspend fun deletePaymentMode(id: String): Result<Unit> {
         return runCatching {
-            val mode = localDataSource.getPaymentModeById(id) ?: throw Exception("Payment mode not found")
+            val userId = sessionManager.getCurrentUserId() ?: throw IllegalStateException("Not logged in")
+            val mode = localDataSource.getPaymentModeById(id, userId) ?: throw Exception("Payment mode not found")
             if (mode.isSystem) throw Exception("System payment modes cannot be deleted")
             
-            val activeTransactionCount = localDataSource.getActiveTransactionCount(id)
+            val activeTransactionCount = localDataSource.getActiveTransactionCount(id, userId)
             if (activeTransactionCount > 0) {
                 throw Exception("Cannot delete: $activeTransactionCount active transactions are linked to this mode. Archive it instead.")
             }
             
-            localDataSource.deletePaymentMode(id)
+            localDataSource.deletePaymentMode(id, userId)
         }
     }
 
     override suspend fun setPaymentModeActive(id: String, isActive: Boolean): Result<Unit> {
         return runCatching {
-            localDataSource.setPaymentModeActive(id, isActive)
+            val userId = sessionManager.getCurrentUserId() ?: throw IllegalStateException("Not logged in")
+            localDataSource.setPaymentModeActive(id, isActive, userId)
         }
     }
 
     override suspend fun getActiveTransactionCount(id: String): Int {
-        return localDataSource.getActiveTransactionCount(id)
+        val userId = sessionManager.getCurrentUserId() ?: return 0
+        return localDataSource.getActiveTransactionCount(id, userId)
     }
 
     override suspend fun seedDefaultPaymentModes(): Result<Unit> {

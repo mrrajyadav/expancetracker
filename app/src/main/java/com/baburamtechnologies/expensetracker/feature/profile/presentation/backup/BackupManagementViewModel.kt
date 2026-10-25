@@ -62,12 +62,12 @@ class BackupManagementViewModel @Inject constructor(
         viewModelScope.launch {
             val uid = currentUserProvider.userId() ?: return@launch
             preferenceManager.setAutoBackupEnabled(uid, enabled)
-            updateSchedule()
+            updateSchedule(enabled)
         }
     }
 
-    private suspend fun updateSchedule() {
-        if (_uiState.value.isAutoBackupEnabled) {
+    private suspend fun updateSchedule(enabled: Boolean) {
+        if (enabled) {
             backupScheduleManager.schedulePeriodicBackup()
         } else {
             backupScheduleManager.cancelPeriodicBackup()

@@ -169,12 +169,22 @@ class ProfileViewModel @Inject constructor(
             try {
                 // 1. Delete cloud backups in Google Drive
                 if (!email.isNullOrBlank()) {
-                    backupRepository.deleteAllCloudBackups(email)
+                    val cloudResult = backupRepository.deleteAllCloudBackups(email)
+                    if (cloudResult.isFailure) {
+                        _effect.emit(ProfileEffect.ShowMessage("Failed to delete cloud backups: ${cloudResult.exceptionOrNull()?.message}"))
+                        _uiState.update { it.copy(isLoading = false) }
+                        return@launch
+                    }
                 }
 
                 // 2. Delete local user financial records & encryption keys
                 if (!userId.isNullOrBlank()) {
-                    backupRepository.deleteUserData(userId)
+                    val localResult = backupRepository.deleteUserData(userId)
+                    if (localResult.isFailure) {
+                        _effect.emit(ProfileEffect.ShowMessage("Failed to delete local data: ${localResult.exceptionOrNull()?.message}"))
+                        _uiState.update { it.copy(isLoading = false) }
+                        return@launch
+                    }
                 }
 
                 // 3. Delete Firebase Auth account
