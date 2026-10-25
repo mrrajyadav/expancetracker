@@ -56,9 +56,21 @@ class PreferenceManager @Inject constructor(
     }
 
     suspend fun getOrCreateUserBackupSecret(uid: String): String {
-        val md = java.security.MessageDigest.getInstance("SHA-256")
-        val secretBytes = md.digest(uid.toByteArray(Charsets.UTF_8))
-        return Base64.encodeToString(secretBytes, Base64.NO_WRAP)
+        val key = PreferenceKeys.userBackupSecret(uid)
+        val currentSecret = dataStore.data.map { it[key] }.first()
+        if (!currentSecret.isNullOrBlank()) {
+            return currentSecret
+        }
+        val secretBytes = ByteArray(32)
+        SecureRandom().nextBytes(secretBytes)
+        val newSecret = Base64.encodeToString(secretBytes, Base64.NO_WRAP)
+        dataStore.edit { it[key] = newSecret }
+        return newSecret
+    }
+    
+    suspend fun saveUserBackupSecret(uid: String, secret: String) {
+        val key = PreferenceKeys.userBackupSecret(uid)
+        dataStore.edit { it[key] = secret }
     }
 
     val isInitialSetupComplete: Flow<Boolean> = dataStore.data.map { it[PreferenceKeys.IS_INITIAL_SETUP_COMPLETE] ?: false }

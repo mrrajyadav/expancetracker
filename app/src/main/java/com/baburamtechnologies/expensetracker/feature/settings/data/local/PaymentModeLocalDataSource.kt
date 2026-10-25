@@ -26,6 +26,14 @@ class PaymentModeLocalDataSourceImpl @Inject constructor(
     override suspend fun deletePaymentMode(id: String, userId: String) = paymentModeDao.deletePaymentModeById(id, userId)
     override suspend fun setPaymentModeActive(id: String, isActive: Boolean, userId: String) = paymentModeDao.setPaymentModeActive(id, isActive, userId)
     override suspend fun insertPaymentModes(paymentModes: List<PaymentModeEntity>) = paymentModeDao.insertPaymentModes(paymentModes)
-    override suspend fun updatePaymentMode(paymentMode: PaymentModeEntity) = paymentModeDao.updatePaymentMode(paymentMode)
+    override suspend fun updatePaymentMode(paymentMode: PaymentModeEntity) = paymentModeDao.updatePaymentMode(
+        id = paymentMode.id,
+        userId = paymentMode.userId,
+        name = paymentMode.name,
+        displayOrder = paymentMode.displayOrder,
+        isSystem = paymentMode.isSystem,
+        isActive = paymentMode.isActive,
+        updatedAt = paymentMode.updatedAt
+    )
     override suspend fun getPaymentModeById(id: String, userId: String) = paymentModeDao.getPaymentModeById(id, userId)
 }

@@ -136,6 +136,20 @@ class BackupRepositoryImpl @Inject constructor(
             metadataFile.writeText(stableJson.encodeToString(signedMetadata))
             driveDataSource.uploadFile(metadataFile, metadataFileName, "application/json")
             
+            // Backup the user secret using deterministic recovery key for seamless restore
+            val recoverySalt = cryptoManager.generateSalt()
+            val recoveryIv = cryptoManager.generateIv()
+            val recoveryMasterKey = cryptoManager.deriveLegacyMasterKey(firebaseUid, recoverySalt, 310000)
+            val recoveryEncryptedSecret = cryptoManager.encrypt(userSecret.toByteArray(Charsets.UTF_8), recoveryMasterKey.encoded, recoveryIv)
+            val recoveryPayload = buildJsonObject {
+                put("salt", Base64.encodeToString(recoverySalt, Base64.NO_WRAP))
+                put("iv", Base64.encodeToString(recoveryIv, Base64.NO_WRAP))
+                put("encryptedSecret", Base64.encodeToString(recoveryEncryptedSecret, Base64.NO_WRAP))
+            }
+            val recoveryFile = File(context.cacheDir, "recovery_metadata.json")
+            recoveryFile.writeText(recoveryPayload.toString())
+            driveDataSource.uploadFile(recoveryFile, "recovery_metadata.json", "application/json")
+            
             val wrappedCloudKey = cryptoManager.wrapKey(cloudKey)
             val wrappedMasterKey = cryptoManager.wrapKey(masterKey.encoded)
             preferenceManager.saveBackupKeys(
@@ -294,6 +308,28 @@ class BackupRepositoryImpl @Inject constructor(
                 return@withContext Result.failure(Exception(error))
             }
 
+            // Attempt seamless secret recovery first
+            val recoveryFileId = driveDataSource.getFileIdByName("recovery_metadata.json")
+            if (recoveryFileId != null) {
+                val tempRecoveryFile = File(context.cacheDir, "recovery_metadata.json")
+                try {
+                    driveDataSource.downloadFile(recoveryFileId, tempRecoveryFile)
+                    val recoveryJson = stableJson.parseToJsonElement(tempRecoveryFile.readText()).jsonObject
+                    val recSalt = Base64.decode(recoveryJson["salt"]!!.jsonPrimitive.content, Base64.NO_WRAP)
+                    val recIv = Base64.decode(recoveryJson["iv"]!!.jsonPrimitive.content, Base64.NO_WRAP)
+                    val recEncrypted = Base64.decode(recoveryJson["encryptedSecret"]!!.jsonPrimitive.content, Base64.NO_WRAP)
+                    val recMasterKey = cryptoManager.deriveLegacyMasterKey(firebaseUid, recSalt, 310000)
+                    val decryptedSecretBytes = cryptoManager.decrypt(recEncrypted, recMasterKey.encoded, recIv)
+                    val recoveredSecret = String(decryptedSecretBytes, Charsets.UTF_8)
+                    preferenceManager.saveUserBackupSecret(firebaseUid, recoveredSecret)
+                    Log.i(tag, "[RESTORE] Seamless user secret recovery succeeded.")
+                } catch (e: Exception) {
+                    Log.w(tag, "[RESTORE] Failed to recover user secret seamlessly", e)
+                } finally {
+                    if (tempRecoveryFile.exists()) tempRecoveryFile.delete()
+                }
+            }
+
             // Schema & Version Compatibility Verification
             val currentSchemaVersion = database.openHelper.readableDatabase.version
             if (signedMetadata.schemaVersion > currentSchemaVersion) {
@@ -420,39 +456,27 @@ class BackupRepositoryImpl @Inject constructor(
 
             Log.i(tag, "[RESTORE] COMPLETED SUCCESSFULLY")
             _restoreState.value = RestoreState.Completed
-            
-            // Restore auto-backup scheduling if it was enabled
-            val isAutoBackupEnabled = preferenceManager.autoBackupEnabled(firebaseUid).first()
-            if (isAutoBackupEnabled) {
-                backupScheduleManager.schedulePeriodicBackup()
-                Log.d(tag, "[RESTORE] Periodic backup schedule restored")
-            }
-
             Result.success(Unit)
         } catch (e: UserRecoverableAuthIOException) {
             Log.e(tag, "[RESTORE] AUTH REQUIRED", e)
             _restoreState.value = RestoreState.AuthorizationRequired(e.intent)
-            
-            // Restore auto-backup scheduling if it was enabled
-            val isAutoBackupEnabled = preferenceManager.autoBackupEnabled(firebaseUid).first()
-            if (isAutoBackupEnabled) {
-                backupScheduleManager.schedulePeriodicBackup()
-            }
-
             Result.failure(e)
         } catch (e: Exception) {
             Log.e(tag, "[RESTORE] FATAL ERROR: ${e.message}", e)
             _restoreState.value = RestoreState.Failed(e.message ?: "Unknown fatal error")
-            
-            // Restore auto-backup scheduling if it was enabled
-            val isAutoBackupEnabled = preferenceManager.autoBackupEnabled(firebaseUid).first()
-            if (isAutoBackupEnabled) {
-                backupScheduleManager.schedulePeriodicBackup()
-            }
-
             Result.failure(e)
         } finally {
             if (tempRestoreFile.exists()) tempRestoreFile.delete()
+            // Restore auto-backup scheduling if it was enabled (for any exit path)
+            try {
+                val isAutoBackupEnabled = preferenceManager.autoBackupEnabled(firebaseUid).first()
+                if (isAutoBackupEnabled) {
+                    backupScheduleManager.schedulePeriodicBackup()
+                    Log.d(tag, "[RESTORE] Periodic backup schedule restored")
+                }
+            } catch (e: Exception) {
+                Log.w(tag, "[RESTORE] Failed to restore backup scheduling: ${e.message}")
+            }
         }
     }
 
