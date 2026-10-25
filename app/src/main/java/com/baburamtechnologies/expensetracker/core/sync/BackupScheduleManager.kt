@@ -20,6 +20,7 @@ class BackupScheduleManager @Inject constructor(
 
         val backupRequest = OneTimeWorkRequestBuilder<BackupWorker>()
             .setConstraints(constraints)
+            .addTag("OneTimeBackup")
             .setBackoffCriteria(
                 BackoffPolicy.EXPONENTIAL,
                 WorkRequest.MIN_BACKOFF_MILLIS,
@@ -41,6 +42,7 @@ class BackupScheduleManager @Inject constructor(
 
         val backupRequest = PeriodicWorkRequestBuilder<BackupWorker>(1, TimeUnit.DAYS)
             .setConstraints(constraints)
+            .addTag("PeriodicBackup")
             .setBackoffCriteria(
                 BackoffPolicy.EXPONENTIAL,
                 WorkRequest.MIN_BACKOFF_MILLIS,

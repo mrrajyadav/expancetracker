@@ -125,7 +125,11 @@ class RestoreOnboardingViewModel @Inject constructor(
             _uiState.update { it.copy(isLoading = true, errorMessage = null) }
             backupRepository.clearLocalData().onSuccess {
                 preferenceManager.setInitialSetupComplete(true)
-                paymentModeRepository.seedDefaultPaymentModes()
+                try {
+                    paymentModeRepository.seedDefaultPaymentModes()
+                } catch (_: Exception) {
+                    // Ignore seeding failure if profile is still missing
+                }
                 _effect.emit(RestoreOnboardingEffect.NavigateToHome)
             }.onFailure { error ->
                 _uiState.update { it.copy(isLoading = false, errorMessage = error.message ?: "Failed to clear local data") }

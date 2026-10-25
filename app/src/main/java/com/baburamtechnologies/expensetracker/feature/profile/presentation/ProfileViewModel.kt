@@ -181,25 +181,28 @@ class ProfileViewModel @Inject constructor(
                     return@launch
                 }
 
-                // 2. Delete Firebase Auth account (can fail due to recent login required)
-                val authResult = authRepository.deleteAccount()
-                if (authResult.isFailure) {
-                    val errorMsg = authResult.exceptionOrNull()?.message ?: "Unknown auth error"
-                    _effect.emit(ProfileEffect.ShowMessage("Account deletion failed. Please re-login and try again. ($errorMsg)"))
+                // 2. Delete local user financial records & encryption keys
+                val localResult = backupRepository.deleteUserData(userId)
+                if (localResult.isFailure) {
+                    _effect.emit(ProfileEffect.ShowMessage("Cloud data deleted, but local cleanup failed: ${localResult.exceptionOrNull()?.message}"))
                     _uiState.update { it.copy(isLoading = false) }
                     return@launch
                 }
 
-                // 3. Delete local user financial records & encryption keys
-                // Only executed if Auth deletion was successful
-                val localResult = backupRepository.deleteUserData(userId)
-                if (localResult.isFailure) {
-                    _effect.emit(ProfileEffect.ShowMessage("Account deleted from cloud, but local device cleanup failed: ${localResult.exceptionOrNull()?.message}"))
-                } else {
-                    _effect.emit(ProfileEffect.ShowMessage("Account and all associated local & cloud data deleted successfully"))
+                // 3. Delete Firebase Auth account
+                // This is the last step because if it requires recent re-auth and fails,
+                // the user can simply re-authenticate to finish the deletion.
+                val authResult = authRepository.deleteAccount()
+                if (authResult.isFailure) {
+                    val errorMsg = authResult.exceptionOrNull()?.message ?: "Unknown auth error"
+                    _effect.emit(ProfileEffect.ShowMessage("Data deleted, but account deletion requires recent login. Please re-login and try again. ($errorMsg)"))
+                    authRepository.signOut()
+                    _effect.emit(ProfileEffect.RestartApp)
+                    return@launch
                 }
                 
                 authRepository.signOut()
+                _effect.emit(ProfileEffect.ShowMessage("Account and all associated local & cloud data deleted successfully"))
                 _effect.emit(ProfileEffect.RestartApp)
                 
             } catch (e: Exception) {

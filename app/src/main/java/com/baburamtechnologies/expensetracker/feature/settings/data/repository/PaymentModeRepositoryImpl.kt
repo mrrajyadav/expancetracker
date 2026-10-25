@@ -92,8 +92,15 @@ class PaymentModeRepositoryImpl @Inject constructor(
     override suspend fun setPaymentModeActive(id: String, isActive: Boolean): Result<Unit> {
         return runCatching {
             val userId = sessionManager.getCurrentUserId() ?: throw IllegalStateException("Not logged in")
-            // Explicit rule: Users can deactivate system modes (e.g., hide "Cash"),
-            // but they cannot completely delete or rename them.
+            
+            // Cannot deactivate if it's the last active mode
+            if (!isActive) {
+                val activeModes = localDataSource.getActivePaymentModes(userId).first()
+                if (activeModes.size <= 1 && activeModes.any { it.id == id }) {
+                    throw IllegalStateException("Cannot deactivate the last active payment mode.")
+                }
+            }
+            
             localDataSource.setPaymentModeActive(id, isActive, userId)
         }
     }
