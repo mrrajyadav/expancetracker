@@ -181,15 +181,10 @@ class BackupRepositoryImpl @Inject constructor(
             // Update the main manifest (backup_metadata.json) only after successful validation
             driveDataSource.uploadFile(metadataFile, metadataFileName, "application/json")
             
-            // Backup the user secret seamlessly to Drive AppData using JSON payload.
-            // Note: Since this is stored in Google Drive AppData folder, it is inherently
-            // protected by Google's authentication and app-specific isolation.
-            val recoveryPayload = buildJsonObject {
-                put("secret", userSecret)
-            }
-            val recoveryFile = File(context.cacheDir, "recovery_metadata.json")
-            recoveryFile.writeText(recoveryPayload.toString())
-            driveDataSource.uploadFile(recoveryFile, "recovery_metadata.json", "application/json")
+            // Note: We deliberately do not upload the raw userSecret to Drive anymore 
+            // (e.g. recovery_metadata.json) to prevent plain-text secret storage in the cloud. 
+            // End-to-end encryption implies the user must retain the secret or rely on Android 
+            // Auto Backup to transfer the local Keystore/DataStore to a new device.
             
             val wrappedCloudKey = cryptoManager.wrapKey(cloudKey)
             val wrappedMasterKey = cryptoManager.wrapKey(masterKey.encoded)

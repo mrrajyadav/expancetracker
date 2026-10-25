@@ -192,10 +192,14 @@ class ProfileViewModel @Inject constructor(
 
                 // 3. Delete local user financial records & encryption keys
                 // Only executed if Auth deletion was successful
-                backupRepository.deleteUserData(userId)
+                val localResult = backupRepository.deleteUserData(userId)
+                if (localResult.isFailure) {
+                    _effect.emit(ProfileEffect.ShowMessage("Account deleted from cloud, but local device cleanup failed: ${localResult.exceptionOrNull()?.message}"))
+                } else {
+                    _effect.emit(ProfileEffect.ShowMessage("Account and all associated local & cloud data deleted successfully"))
+                }
                 
                 authRepository.signOut()
-                _effect.emit(ProfileEffect.ShowMessage("Account and all associated local & cloud data deleted successfully"))
                 _effect.emit(ProfileEffect.RestartApp)
                 
             } catch (e: Exception) {

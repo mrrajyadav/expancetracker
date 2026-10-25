@@ -8,6 +8,7 @@ import com.baburamtechnologies.expensetracker.core.backup.domain.RestoreState
 import com.baburamtechnologies.expensetracker.core.backup.domain.isActive
 import com.baburamtechnologies.expensetracker.core.backup.model.BackupMetadata
 import com.baburamtechnologies.expensetracker.core.datastore.PreferenceManager
+import com.baburamtechnologies.expensetracker.feature.settings.domain.repository.PaymentModeRepository
 import com.google.api.client.googleapis.extensions.android.gms.auth.UserRecoverableAuthIOException
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.*
@@ -20,7 +21,8 @@ import javax.inject.Inject
 class RestoreOnboardingViewModel @Inject constructor(
     private val backupRepository: BackupRepository,
     private val currentUserProvider: CurrentUserProvider,
-    private val preferenceManager: PreferenceManager
+    private val preferenceManager: PreferenceManager,
+    private val paymentModeRepository: PaymentModeRepository
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(RestoreOnboardingUiState(isLoading = true))
@@ -123,6 +125,7 @@ class RestoreOnboardingViewModel @Inject constructor(
             _uiState.update { it.copy(isLoading = true, errorMessage = null) }
             backupRepository.clearLocalData().onSuccess {
                 preferenceManager.setInitialSetupComplete(true)
+                paymentModeRepository.seedDefaultPaymentModes()
                 _effect.emit(RestoreOnboardingEffect.NavigateToHome)
             }.onFailure { error ->
                 _uiState.update { it.copy(isLoading = false, errorMessage = error.message ?: "Failed to clear local data") }

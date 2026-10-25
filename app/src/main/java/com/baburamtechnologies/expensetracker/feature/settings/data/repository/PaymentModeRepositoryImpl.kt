@@ -26,7 +26,6 @@ class PaymentModeRepositoryImpl @Inject constructor(
                 if (userId != null) {
                     localDataSource.getAllPaymentModes(userId)
                         .map { entities -> entities.map { it.toDomain() } }
-                        .onEach { if (it.isEmpty()) seedDefaultPaymentModes() }
                 } else {
                     flowOf(emptyList())
                 }
@@ -93,6 +92,8 @@ class PaymentModeRepositoryImpl @Inject constructor(
     override suspend fun setPaymentModeActive(id: String, isActive: Boolean): Result<Unit> {
         return runCatching {
             val userId = sessionManager.getCurrentUserId() ?: throw IllegalStateException("Not logged in")
+            // Explicit rule: Users can deactivate system modes (e.g., hide "Cash"),
+            // but they cannot completely delete or rename them.
             localDataSource.setPaymentModeActive(id, isActive, userId)
         }
     }
